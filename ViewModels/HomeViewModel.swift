@@ -26,7 +26,7 @@ class HomeViewModel: ObservableObject {
 
     // MARK: - Initialization
     init(
-        audioRecorder: AudioRecordingService = AudioRecorder(),
+        audioRecorder: AudioRecordingService = AudioRecorder.shared,
         transcriptionService: TranscriptionServiceProtocol = WhisperTranscriptionService(),
         localAudioStorage: AudioStorageService = LocalAudioStorage(),
         coreDataStorage: JournalStorage = CoreDataStorage()
@@ -56,45 +56,48 @@ class HomeViewModel: ObservableObject {
     // MARK: - Public Methods
     func toggleRecording() {
         errorMessage = nil
-        if isRecording {
-            Task {
+        Task {
+            if isRecording {
                 await stopRecordingAndTranscribe()
+            } else {
+                do {
+                    try await startRecording()
+                } catch {
+                    errorMessage = "Failed to start recording: \(error.localizedDescription)"
+                    statusMessage = "Error: Could not start recording."
+                }
             }
-        } else {
-            startRecording()
         }
     }
 
     // MARK: - Private Helpers
-    private func startRecording() {
+
+    private func startRecording() async throws {
         recordingData = nil
         transcribedText = ""
-        audioRecorder.startRecording()
         statusMessage = "Recording... Tap again to stop."
+        _ = try await AudioRecorder.shared.startRecording() // updated return value is file URL
     }
 
     private func stopRecordingAndTranscribe() async {
-        audioRecorder.stopRecording()
-        statusMessage = "Processing audio..."
-        isLoading = true
-
-        guard let data = audioRecorder.getRecordingData() else {
-            errorMessage = "Failed to get recording data."
-            statusMessage = "Error: Could not retrieve audio."
-            isLoading = false
-            return
-        }
-        self.recordingData = data
-
         do {
+            let fileURL = try await AudioRecorder.shared.stopRecording()
+            statusMessage = "Processing audio..."
+            isLoading = true
+
+            let data = try Data(contentsOf: fileURL)
+            self.recordingData = data
+
             let transcription = try await transcriptionService.transcribeAudio(data: data)
             transcribedText = transcription
             statusMessage = "Transcription complete. Ready to save."
             isLoading = false
+
             await saveJournalEntry()
+
         } catch {
-            errorMessage = "Transcription failed: \(error.localizedDescription)"
-            statusMessage = "Error during transcription."
+            errorMessage = "Failed to stop or transcribe: \(error.localizedDescription)"
+            statusMessage = "Error processing audio."
             isLoading = false
         }
     }

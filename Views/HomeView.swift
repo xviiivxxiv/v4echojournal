@@ -93,7 +93,7 @@ struct HomeView: View {
 
 struct HomeView_Previews: PreviewProvider {
     static var previews: some View {
-        let dummyRecorder = AudioRecorder()
+        let dummyRecorder = AudioRecorder.shared
         HomeView(audioRecorder: dummyRecorder)
             .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
     }

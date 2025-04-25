@@ -6,7 +6,9 @@ protocol TranscriptionServiceProtocol {
 }
 
 // MARK: - WhisperTranscriptionService
-class WhisperTranscriptionService: TranscriptionServiceProtocol {
+final class WhisperTranscriptionService: TranscriptionServiceProtocol {
+
+    static let shared = WhisperTranscriptionService()
 
     private let apiEndpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
 
@@ -22,16 +24,21 @@ class WhisperTranscriptionService: TranscriptionServiceProtocol {
     // MARK: - Transcribe Audio
     func transcribeAudio(data: Data) async throws -> String {
         // Network Check
+        // Add await because NetworkMonitor is @MainActor
         guard await NetworkMonitor.shared.isConnected else {
             print("❌ Network Offline - Transcription skipped.")
             throw TranscriptionError.apiError("You appear to be offline. Please connect to Wi-Fi or cellular.")
         }
         
-        // ✅ Read API key securely from Info.plist
-        guard let apiKey = Bundle.main.infoDictionary?["OpenAI_API_Key"] as? String,
-              !apiKey.contains("YOUR_") else {
+        // ✅ Read API key securely (prioritizing Info.plist)
+        guard let apiKey = getTranscriptionAPIKey(), !apiKey.isEmpty else {
             throw TranscriptionError.missingAPIKey
         }
+        
+        // Safely log the key being used for transcription
+        let tokenPrefix = apiKey.prefix(10)
+        let tokenSuffix = apiKey.suffix(4)
+        print("🎤 TranscriptionService: Using key starting with \(tokenPrefix)...\(tokenSuffix)")
 
         var request = URLRequest(url: apiEndpoint)
         request.httpMethod = "POST"
@@ -58,6 +65,9 @@ class WhisperTranscriptionService: TranscriptionServiceProtocol {
         // 📎 End
         body.append("--\(boundary)--\r\n")
         request.httpBody = body
+
+        // Log headers just before sending
+        print("🔍 Request Headers: \(request.allHTTPHeaderFields ?? [:])")
 
         do {
             let (responseData, response) = try await URLSession.shared.data(for: request)
@@ -87,6 +97,46 @@ class WhisperTranscriptionService: TranscriptionServiceProtocol {
             print("❌ Network error during transcription: \(error.localizedDescription)")
             throw TranscriptionError.networkError(error)
         }
+    }
+
+    // Helper function to encapsulate API key loading for Transcription
+    private func getTranscriptionAPIKey() -> String? {
+        var apiKey: String? = nil
+        var keySource: String = "Unknown"
+
+        // 1. Try loading from Environment Variable
+        if let keyFromEnv = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+           !keyFromEnv.isEmpty,
+           !keyFromEnv.starts(with: "YOUR_") {
+            // Trim whitespace just in case
+            apiKey = keyFromEnv.trimmingCharacters(in: .whitespacesAndNewlines)
+            keySource = "Environment Variable"
+        } 
+        
+        // 2. Try loading from Info.plist (Fallback 1)
+        if apiKey == nil {
+            if let infoDict = Bundle.main.infoDictionary,
+               let keyFromInfoPlist = infoDict["OpenAI_API_Key"] as? String,
+               !keyFromInfoPlist.isEmpty,
+               !keyFromInfoPlist.starts(with: "YOUR_") {
+                apiKey = keyFromInfoPlist
+                keySource = "Info.plist"
+            } else {
+                 keySource = "Info.plist (Not Found/Invalid)"
+            }
+        }
+
+        // 3. Fallback ONLY in DEBUG
+        #if DEBUG
+        if apiKey == nil {
+            print("⚠️ TranscriptionService DEBUG: No fallback key provided. Ensure Env Var or Info.plist is set.")
+            // apiKey = "YOUR_TRANSCRIPTION_DEBUG_FALLBACK_KEY_HERE" // REMOVED HARDCODED KEY
+            // keySource = "Hardcoded (DEBUG)"
+        }
+        #endif
+        
+        print("🎤 TranscriptionService: Key loaded from [\(keySource)]")
+        return apiKey
     }
 }
 

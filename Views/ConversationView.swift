@@ -2,129 +2,125 @@ import SwiftUI
 import CoreData
 
 struct ConversationView: View {
-    @StateObject private var viewModel: ConversationViewModel
+    @ObservedObject private var viewModel: ConversationViewModel
+    @StateObject private var followUpLoopController: FollowUpLoopController
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var temporaryAnswers: [UUID: String] = [:]
-
     init(journalEntry: JournalEntryCD) {
-        _viewModel = StateObject(wrappedValue: ConversationViewModel(
+        let initialViewModel = ConversationViewModel(
             journalEntry: journalEntry,
             context: PersistenceController.shared.container.viewContext
+        )
+        _viewModel = ObservedObject(wrappedValue: initialViewModel)
+
+        _followUpLoopController = StateObject(wrappedValue: FollowUpLoopController(
+            context: PersistenceController.shared.container.viewContext,
+            gptService: GPTService.shared,
+            audioRecorder: AudioRecorder.shared
         ))
     }
 
     var body: some View {
-        List {
-            originalEntrySection
-            followUpQuestionsSection
+        VStack(spacing: 0) {
+            originalEntrySection(entryText: viewModel.journalEntry.entryText ?? "No transcript")
+                .padding()
 
-            if viewModel.canAskMore {
-                Section {
-                    Button("Ask Another Question") {
-                        viewModel.generateFollowUpQuestions()
-                    }
-                    .disabled(viewModel.isLoadingQuestions)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                }
-            }
+            Divider()
 
-            if viewModel.isLoadingQuestions {
-                Section {
-                    HStack {
-                        Spacer()
-                        ProgressView("Generating Reflection...")
-                        Spacer()
-                    }
-                }
-            }
-
-            if let errorMessage = viewModel.errorMessage {
-                Section {
-                    Text("Error: \(errorMessage)")
-                        .foregroundColor(.red)
-                }
-            }
+            controllerStateSection(controller: followUpLoopController)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Reflection")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Reflection Error", isPresented: $viewModel.showErrorAlert, presenting: viewModel.errorMessage) { _ in
-            Button("OK") { viewModel.errorMessage = nil }
+        .alert("Reflection Error", isPresented: Binding<Bool>(
+            get: { followUpLoopController.currentState.isError },
+            set: { _,_ in /* Cannot set error state directly */ }
+        ), presenting: followUpLoopController.currentState.errorMessage) { _ in
+            Button("OK") { /* Maybe add logic to reset state if needed */ }
         } message: { message in
             Text(message)
         }
         .onAppear {
-            viewModel.loadFollowUps() // ✅ Ensure it's being called as a function
-            if viewModel.followUps.isEmpty {
-                viewModel.generateFollowUpQuestions()
+            followUpLoopController.startLoop(for: viewModel.journalEntry)
+            print("ConversationView.onAppear: Called followUpLoopController.startLoop")
+        }
+    }
+
+    private func originalEntrySection(entryText: String) -> some View {
+        VStack(alignment: .leading) {
+            Text("Original Entry")
+                .font(.headline)
+                .foregroundColor(.secondary)
+            ScrollView {
+                Text(entryText)
+                    .foregroundColor(.primary)
             }
-        }
-        .onReceive(viewModel.$followUps) { updateTemporaryAnswers(from: $0) }
-    }
-
-    private var originalEntrySection: some View {
-        Section(header: Text("Original Entry")) {
-            Text(viewModel.journalEntry.entryText ?? "No transcript")
-                .foregroundColor(.primary)
-                .padding(.vertical, 5)
+            .frame(maxHeight: 150)
         }
     }
 
-    private var followUpQuestionsSection: some View {
-        Section(header: Text("Follow-up Reflection")) {
-            if viewModel.followUps.isEmpty && !viewModel.isLoadingQuestions && !viewModel.canAskMore {
-                Text("Tap 'Ask Another Question' to start reflecting, or no more questions available.")
+    @ViewBuilder
+    private func controllerStateSection(controller: FollowUpLoopController) -> some View {
+        VStack {
+            switch controller.currentState {
+            case .idle:
+                Text("Starting reflection...")
                     .foregroundColor(.secondary)
-            }
-
-            ForEach(viewModel.followUps) { followUp in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(followUp.question ?? "Empty Question")
-                        .font(.body)
-
-                    TextField("Your thoughts...", text: answerBinding(for: followUp))
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            viewModel.saveAnswer(for: followUp, answer: temporaryAnswers[followUp.id] ?? "")
-
-                        }
+            case .thinking:
+                ProgressView("Thinking...")
+            case .showingQuestion:
+                VStack(spacing: 20) {
+                    Text(controller.currentQuestion)
+                        .font(.title2)
+                        .multilineTextAlignment(.center)
+                    Button("Ready to Answer") {
+                        controller.userReadyToAnswer()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .padding(.vertical, 4)
+            case .listening:
+                VStack(spacing: 20) {
+                     Text("Listening...")
+                        .font(.title3)
+                     if controller.showMicButton {
+                        if controller.isRecording {
+                            Button { controller.stopRecordingAndProcess() } label: {
+                                Label("Stop Recording", systemImage: "stop.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                        } else {
+                             Button { controller.startRecording() } label: {
+                                Label("Start Recording", systemImage: "mic.circle.fill")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            case .processingAnswer:
+                ProgressView("Processing your answer...")
+            case .finished:
+                Text("Reflection complete. You can close this screen.")
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            case .error(let message):
+                Text("Error: \(message)")
+                    .foregroundColor(.red)
+                    .multilineTextAlignment(.center)
             }
-            .onDelete(perform: deleteFollowUp)
         }
     }
+}
 
-    // MARK: - Helpers
-
-    private func answerBinding(for followUp: FollowUpCD) -> Binding<String> {
-        let id = followUp.id
-        return Binding<String>(
-            get: { temporaryAnswers[id] ?? followUp.answer ?? "" },
-            set: { temporaryAnswers[id] = $0 }
-        )
+extension FollowUpLoopController.LoopState {
+    var isError: Bool {
+        if case .error = self { return true } else { return false }
     }
 
-    private func updateTemporaryAnswers(from followUps: [FollowUpCD]) {
-        var updated: [UUID: String] = [:]
-        for followUp in followUps {
-            let id = followUp.id
-            updated[id] = temporaryAnswers[id] ?? followUp.answer ?? ""
-        }
-        temporaryAnswers = updated
-    }
-
-    private func deleteFollowUp(at offsets: IndexSet) {
-        offsets.map { viewModel.followUps[$0] }.forEach(viewContext.delete)
-        do {
-            try viewContext.save()
-        } catch {
-            print("❌ Delete failed: \(error.localizedDescription)")
-            viewModel.errorMessage = "Failed to delete follow-up: \(error.localizedDescription)"
-            viewModel.showErrorAlert = true
-            viewContext.rollback()
-        }
+    var errorMessage: String? {
+        if case .error(let message) = self { return message } else { return nil }
     }
 }
 
