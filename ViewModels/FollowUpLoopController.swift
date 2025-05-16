@@ -25,6 +25,8 @@ class FollowUpLoopController: ObservableObject {
     @Published var currentQuestion: String = ""
     @Published var isRecording: Bool = false
     @Published var showMicButton: Bool = false
+    @Published var lastUserAnswer: String = ""
+    @Published var isExperiencingHighLatency: Bool = false
 
     private let managedObjectContext: NSManagedObjectContext
     private let gptService: GPTService
@@ -36,11 +38,15 @@ class FollowUpLoopController: ObservableObject {
     private var currentFollowUp: FollowUpCD?
     private var chatHistory: [ChatMessage] = []
     private var cancellables = Set<AnyCancellable>()
+    private var fileNameBase: String = ""
+    private var requestTimestamps: [Date] = []
+    private let latencyThreshold: TimeInterval = 4.0 // Seconds
+    private let latencyWindowSize = 3 // Check average over last 3 requests
 
     init(
         context: NSManagedObjectContext,
         gptService: GPTService = GPTService.shared,
-        transcriptionService: TranscriptionServiceProtocol = WhisperTranscriptionService(),
+        transcriptionService: TranscriptionServiceProtocol,
         audioRecorder: AudioRecordingService = AudioRecorder.shared,
         networkMonitor: NetworkMonitor = NetworkMonitor.shared
     ) {
@@ -58,36 +64,33 @@ class FollowUpLoopController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        audioRecorder.isRecording
+        audioRecorder.isRecordingPublisher
             .receive(on: DispatchQueue.main)
             .assign(to: &$isRecording)
     }
 
     func startLoop(for entry: JournalEntryCD) {
-        print("🏁 [Controller] startLoop called for entry ID: \(entry.objectID)")
         guard networkMonitor.isConnected else {
-            print("❌ [Controller] startLoop aborted: No network connection.")
             handleError("Cannot start follow-up loop offline.")
             return
         }
-        print("➡️ [Controller] startLoop: Network connected. Setting initial entry.")
+        
         initialEntry = entry
-        print("➡️ [Controller] startLoop: Building initial chat history...")
         chatHistory = buildInitialChatHistory(from: entry)
-        print("➡️ [Controller] startLoop: Setting state to thinking.")
         currentState = .thinking
-        print("➡️ [Controller] startLoop: Calling generateNextFollowUp...")
         generateNextFollowUp()
-        print("🏁 [Controller] startLoop finished.")
     }
 
     func startRecording() {
         guard case .listening = currentState else { return }
+        fileNameBase = UUID().uuidString
+        
         Task {
             do {
-                let fileURL: URL = try await audioRecorder.startRecording()
-                print("🎙️ Recording started at path: \(fileURL.path)")
-                // You can store `fileURL` somewhere if needed later for playback/upload
+                let success = try await audioRecorder.startRecording(fileNameBase: fileNameBase)
+                if !success {
+                    handleError("Failed to start recording")
+                }
             } catch {
                 handleError("Failed to start recording: \(error.localizedDescription)")
             }
@@ -95,13 +98,16 @@ class FollowUpLoopController: ObservableObject {
     }
 
     func stopRecordingAndProcess() {
-        guard case .listening = currentState, audioRecorder.isRecording.value else { return }
+        guard case .listening = currentState else { return }
+        
         Task {
             do {
-                let fileURL: URL = try await audioRecorder.stopRecording()
-                print("🛑 Recording stopped at path: \(fileURL.path)")
+                guard let audioURL = await audioRecorder.stopRecording() else {
+                    handleError("Failed to get audio URL after recording")
+                    return
+                }
                 currentState = .processingAnswer
-                await processRecordedAnswer(audioURL: fileURL)
+                await processRecordedAnswer(audioURL: audioURL)
             } catch {
                 handleError("Failed to stop recording: \(error.localizedDescription)")
             }
@@ -119,35 +125,23 @@ class FollowUpLoopController: ObservableObject {
     }
 
     private func generateNextFollowUp() {
-        print("➡️ [Controller] Entered generateNextFollowUp")
         guard let entry = initialEntry else {
-            handleError("Initial entry missing."); return
-        }
-        guard networkMonitor.isConnected else {
-            handleError("Cannot generate follow-up offline."); return
+            handleError("Initial entry missing.")
+            return
         }
 
-        print("ℹ️ [Controller] Setting state to thinking.")
         currentState = .thinking
         showMicButton = false
 
         Task {
-            print("🚀 [Controller] Starting Task in generateNextFollowUp")
             do {
-                print("💬 [Controller] Current chat history count: \(chatHistory.count)")
-                print("⏳ [Controller] About to call self.gptService.generateFollowUp")
-
-                let question = try await self.gptService.generateFollowUp(history: chatHistory)
-
-                print("✅ [Controller] gptService.generateFollowUp returned successfully.")
+                let question = try await gptService.generateFollowUp(history: chatHistory)
 
                 if isStopPhrase(question) {
-                    print("🏁 [Controller] GPT indicated end of conversation.")
                     currentState = .finished
                     return
                 }
 
-                print("💾 [Controller] Saving new follow-up question...")
                 let newFollowUp = FollowUpCD(context: managedObjectContext)
                 newFollowUp.id = UUID()
                 newFollowUp.question = question
@@ -155,22 +149,15 @@ class FollowUpLoopController: ObservableObject {
                 newFollowUp.journalEntry = entry
 
                 try managedObjectContext.save()
-                self.currentFollowUp = newFollowUp
-                self.currentQuestion = question
-                self.chatHistory.append(ChatMessage(role: .assistant, content: question))
-                 print("✅ [Controller] Follow-up saved. Setting state to showingQuestion.")
-                self.currentState = .showingQuestion
+                currentFollowUp = newFollowUp
+                currentQuestion = question
+                chatHistory.append(ChatMessage(role: .assistant, content: question))
+                currentState = .showingQuestion
 
-            } catch let gptError as GPTError {
-                 print("💥 [Controller] Caught GPTError: \(gptError)")
-                 handleError("Failed to generate follow-up: \(gptError.localizedDescription)")
             } catch {
-                print("💥 [Controller] Caught non-GPTError: \(error) | Localized: \(error.localizedDescription)")
                 handleError("Failed to generate follow-up: \(error.localizedDescription)")
             }
-             print("🏁 [Controller] Exiting Task in generateNextFollowUp")
         }
-         print("🏁 [Controller] Exiting generateNextFollowUp function body")
     }
 
     private func processRecordedAnswer(audioURL: URL) async {
@@ -181,9 +168,17 @@ class FollowUpLoopController: ObservableObject {
 
         do {
             let audioData = try Data(contentsOf: audioURL)
-            let text = try await transcriptionService.transcribeAudio(data: audioData)
+            
+            let startTime = Date()
+            
+            let text = try await transcriptionService.transcribe(data: audioData, mode: .conversation)
+            
+            let endTime = Date()
+            checkLatency(start: startTime, end: endTime)
+
+            lastUserAnswer = text
             followUp.answer = text
-            followUp.setValue(Date(), forKey: "answeredAt")
+            followUp.answeredAt = Date()
             try managedObjectContext.save()
 
             chatHistory.append(ChatMessage(role: .user, content: text))
@@ -192,27 +187,56 @@ class FollowUpLoopController: ObservableObject {
             handleError("Transcription failed: \(error.localizedDescription)")
         }
     }
+    
+    private func handleError(_ message: String) {
+        print("❌ [Controller] Error: \(message)")
+        currentState = .error(message)
+    }
 
     private func buildInitialChatHistory(from entry: JournalEntryCD) -> [ChatMessage] {
-        guard let text = entry.entryText else { return [] }
-        return [ChatMessage(role: .user, content: text)]
+        var history: [ChatMessage] = []
+        if let entryText = entry.entryText {
+            history.append(ChatMessage(role: .user, content: entryText))
+        }
+        return history
     }
 
     private func isStopPhrase(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return lower.contains("anything else") || lower.contains("wrap up") || lower.contains("done reflecting")
+        let lowercased = text.lowercased()
+        return lowercased.contains("thank you for sharing") || 
+               lowercased.contains("that's all for now") ||
+               lowercased.contains("we've covered everything")
     }
 
-    private func handleError(_ message: String) {
-        print("\u{1F4A5} Error: \(message)")
-        if !isFinishedOrError {
-            currentState = .error(message)
+    private func checkLatency(start: Date, end: Date) {
+        let duration = end.timeIntervalSince(start)
+        print("⏱️ Transcription Request Duration: \(String(format: "%.2f", duration))s")
+        
+        requestTimestamps.append(end)
+        if requestTimestamps.count > latencyWindowSize {
+            requestTimestamps.removeFirst(requestTimestamps.count - latencyWindowSize)
+        }
+        
+        if requestTimestamps.count == latencyWindowSize {
+            var totalDuration: TimeInterval = 0
+            if let firstTimestamp = requestTimestamps.first {
+                 totalDuration = end.timeIntervalSince(firstTimestamp)
+                 let averageDuration = totalDuration / Double(latencyWindowSize - 1)
+                 print("⏱️ Average Transcription Duration (last \(latencyWindowSize)): \(String(format: "%.2f", averageDuration))s")
+                isExperiencingHighLatency = averageDuration > latencyThreshold
+            } else {
+                isExperiencingHighLatency = duration > latencyThreshold
+            }
+
+        } else {
+            isExperiencingHighLatency = duration > latencyThreshold
+        }
+        
+        if isExperiencingHighLatency {
+            print("⚠️ High latency detected.")
+        } else {
+             print("✅ Latency within threshold.")
         }
     }
-
-    private var isFinishedOrError: Bool {
-        if case .finished = currentState { return true }
-        if case .error = currentState { return true }
-        return false
-    }
 }
+ 

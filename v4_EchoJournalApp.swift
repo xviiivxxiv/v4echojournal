@@ -13,25 +13,27 @@ struct v4_EchoJournalApp: App {
     let persistenceController = PersistenceController.shared
     // Use the singleton instance, no need for @StateObject here
     let audioRecorder = AudioRecorder.shared
+    @StateObject private var settingsViewModel = SettingsViewModel()
 
     init() {
         // Remove the incorrect StateObject initialization
         // _audioRecorder = StateObject(wrappedValue: AudioRecorder())
         
-        print("🏁 App Initializing... Forcing GPTService init.")
-        // Explicitly access the singleton to trigger its initialization
+        print("🏁 App Initializing... Forcing Singleton inits.")
+        // Explicitly access the singletons to trigger their initialization
         _ = GPTService.shared
-        // Access other singletons if needed early
+        _ = WhisperTranscriptionService.shared
         _ = NetworkMonitor.shared
         print("🏁 App Initialization Complete.")
     }
 
     var body: some Scene {
         WindowGroup {
-            // Pass the shared instance to HomeView
-            HomeView(audioRecorder: audioRecorder)
-                // Pass the managed object context down the environment
+            // Show MainTabView as the root view after onboarding is implicitly handled
+            MainTabView()
+                // Pass the necessary environment objects down
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .environmentObject(settingsViewModel)
         }
     }
 }

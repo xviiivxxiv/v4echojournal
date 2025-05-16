@@ -3,6 +3,23 @@
     <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
         <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
+    <entity name="FollowUpCD" representedClassName="FollowUpCD" syncable="YES">
+        <attribute name="answer" optional="YES" attributeType="String"/>
+        <attribute name="answeredAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="question" attributeType="String"/>
+        <relationship name="journalEntry" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="JournalEntryCD" inverseName="followups" inverseEntity="JournalEntryCD"/>
+    </entity>
+    <entity name="JournalEntryCD" representedClassName="JournalEntryCD" syncable="YES">
+        <attribute name="audioURL" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="entryText" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="keywords" optional="YES" attributeType="String"/>
+        <attribute name="mood" optional="YES" attributeType="String"/>
+        <relationship name="followups" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="FollowUpCD" inverseName="journalEntry" inverseEntity="FollowUpCD"/>
+    </entity>
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
     </elements>

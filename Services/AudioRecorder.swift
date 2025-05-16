@@ -2,73 +2,161 @@ import Foundation
 import AVFoundation
 import Combine
 
-protocol AudioRecordingService {
-    var isRecording: CurrentValueSubject<Bool, Never> { get }
+protocol AudioRecordingService: ObservableObject {
+    var isRecordingPublisher: Published<Bool>.Publisher { get }
+    var isRecording: Bool { get }
     var recordingURL: URL? { get }
     var recordingLog: [URL] { get }  // ✅ Log of all file paths
     var errorPublisher: PassthroughSubject<Error, Never> { get }
+    var audioFileURL: URL? { get }
 
-    func startRecording() async throws -> URL
-    func stopRecording() async throws -> URL
+    func startRecording(fileNameBase: String) async -> Bool
+    func stopRecording() async -> URL?
+    func deleteRecording()
     func getRecordingData() -> Data?
 }
 
 final class AudioRecorder: NSObject, ObservableObject, AudioRecordingService, AVAudioRecorderDelegate {
     static let shared = AudioRecorder()
 
+    @Published private(set) var isRecording = false
+    var isRecordingPublisher: Published<Bool>.Publisher { $isRecording }
+    @Published var elapsedTime: TimeInterval = 0
+    @Published private(set) var audioFileURL: URL? = nil
+    @Published var audioPower: Float = 0.0
+    
     private var audioRecorder: AVAudioRecorder?
     var recordingURL: URL?
     var recordingLog: [URL] = []
 
-    var isRecording = CurrentValueSubject<Bool, Never>(false)
     var errorPublisher = PassthroughSubject<Error, Never>()
+
+    private var recordingSession: AVAudioSession = AVAudioSession.sharedInstance()
+    private var timer: Timer?
+    private var powerTimer: Timer?
 
     private override init() {
         super.init()
     }
 
-    // MARK: - Async Recording Functions
+    // MARK: - File Management Helpers
+    
+    private func getDocumentsDirectory() -> URL {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths[0]
+    }
 
-    func startRecording() async throws -> URL {
-        try configureAudioSession()
-        try await requestMicrophonePermission()
+    private func getAudioDirectory(subdirectory: String = "Recordings") -> URL {
+        let audioDirectory = getDocumentsDirectory().appendingPathComponent(subdirectory)
+        do {
+            try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true, attributes: nil)
+            print("✅ Audio directory created/ensured at: \(audioDirectory.path)")
+        } catch {
+            print("❌ Failed to create audio directory: \(error)")
+        }
+        return audioDirectory
+    }
 
-        let filename = getDocumentsDirectory().appendingPathComponent("recording-\(UUID().uuidString).m4a")
-        recordingURL = filename
+    // MARK: - Recording Control
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 12000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
+    func startRecording(fileNameBase: String) async -> Bool {
+        await MainActor.run { self.isRecording = false }
+        print("🎙️ Attempting to start recording...")
+        do {
+            try recordingSession.setCategory(.playAndRecord, mode: .default)
+            try recordingSession.setActive(true)
+            print("🎙️ Recording session activated.")
 
-        audioRecorder = try AVAudioRecorder(url: filename, settings: settings)
-        audioRecorder?.delegate = self
-        audioRecorder?.prepareToRecord()
+            let audioDirectory = getAudioDirectory(subdirectory: "FutureNotesAudio")
+            let targetURL = audioDirectory.appendingPathComponent("\(fileNameBase).m4a")
+            self.audioFileURL = targetURL
+            print("🎙️ Recording target URL: \(targetURL.path)")
 
-        if audioRecorder?.record() == true {
-            isRecording.send(true)
-            recordingLog.append(filename) // ✅ Log file
-            print("🎙️ Recording started at: \(filename)")
-            return filename
-        } else {
-            throw NSError(domain: "AudioRecorder", code: 2, userInfo: [NSLocalizedDescriptionKey: "Recording failed to start"])
+            let settings = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 12000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+
+            audioRecorder = try AVAudioRecorder(url: targetURL, settings: settings)
+            audioRecorder?.delegate = self
+            audioRecorder?.isMeteringEnabled = true
+
+            if audioRecorder?.record() == true {
+                print("✅ Recording started successfully.")
+                await MainActor.run {
+                    self.isRecording = true
+                    self.startTimers()
+                }
+                return true
+            } else {
+                print("❌ AudioRecorder failed to start recording.")
+                await MainActor.run { self.cleanupAfterRecording() }
+                return false
+            }
+        } catch {
+            print("❌ Failed to set up recording session or recorder: \(error)")
+            await MainActor.run { self.cleanupAfterRecording() }
+            return false
         }
     }
 
-    func stopRecording() async throws -> URL {
-        guard let recorder = audioRecorder, let url = recordingURL else {
-            throw NSError(domain: "AudioRecorder", code: 3, userInfo: [NSLocalizedDescriptionKey: "No recording in progress"])
+    func stopRecording() async -> URL? {
+        print("🎙️ Stopping recording...")
+        audioRecorder?.stop()
+        await MainActor.run {
+            cleanupAfterRecording()
         }
+        return audioFileURL
+    }
 
-        recorder.stop()
-        isRecording.send(false)
-        print("🛑 Recording stopped")
+    private func startTimers() {
+        stopTimers()
+        
+        self.elapsedTime = 0
+        self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self, self.isRecording else { return }
+            self.elapsedTime += 0.1
+        }
+        
+        self.powerTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+             guard let self = self, let recorder = self.audioRecorder, self.isRecording else { return }
+             recorder.updateMeters()
+             let normalizedPower = max(0, (recorder.averagePower(forChannel: 0) + 60) / 60)
+             self.audioPower = normalizedPower
+        }
+    }
 
-        try await Task.sleep(nanoseconds: 300_000_000) // Ensure file finalizes
+    private func stopTimers() {
+        timer?.invalidate()
+        timer = nil
+        powerTimer?.invalidate()
+        powerTimer = nil
+        self.audioPower = 0.0
+    }
 
-        return url
+    private func cleanupAfterRecording() {
+        print("🧹 Cleaning up recording resources...")
+        stopTimers()
+        isRecording = false
+        audioRecorder = nil
+    }
+    
+    func deleteRecording() {
+        guard let url = audioFileURL else {
+             print("🗑️ No recording file URL found to delete.")
+             return
+        }
+        print("🗑️ Attempting to delete recording at: \(url.path)")
+        do {
+            try FileManager.default.removeItem(at: url)
+            print("✅ Recording deleted successfully.")
+            self.audioFileURL = nil
+        } catch {
+            print("❌ Failed to delete recording file: \(error)")
+        }
+        Task { await MainActor.run { self.cleanupAfterRecording() } }
     }
 
     // MARK: - Support Helpers
@@ -83,66 +171,28 @@ final class AudioRecorder: NSObject, ObservableObject, AudioRecordingService, AV
         }
     }
 
-    private func getDocumentsDirectory() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    }
-
-    private func configureAudioSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
-    }
-
-    private func requestMicrophonePermission() async throws {
-        let session = AVAudioSession.sharedInstance()
-
-        if #available(iOS 17, *) {
-            let granted = await AVAudioApplication.requestRecordPermission()
-            guard granted else {
-                throw NSError(domain: "Microphone", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mic access denied"])
-            }
-        } else {
-            switch session.recordPermission {
-            case .granted:
-                return
-            case .denied:
-                throw NSError(domain: "Microphone", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mic access denied"])
-            case .undetermined:
-                var granted = false
-                let semaphore = DispatchSemaphore(value: 0)
-                session.requestRecordPermission {
-                    granted = $0
-                    semaphore.signal()
-                }
-                semaphore.wait()
-                guard granted else {
-                    throw NSError(domain: "Microphone", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mic access denied"])
-                }
-            @unknown default:
-                throw NSError(domain: "Microphone", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mic permission unknown"])
-            }
-        }
-    }
-
     // MARK: - AVAudioRecorderDelegate
 
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        isRecording.send(false)
-        if !flag {
-            print("⚠️ [AudioRecorder] Recording stopped prematurely.")
-        }
-        if audioRecorder === recorder {
-            audioRecorder = nil
+        print("🎙️ Delegate: audioRecorderDidFinishRecording (Success: \(flag))")
+        Task {
+            await MainActor.run {
+                self.cleanupAfterRecording()
+                if !flag {
+                    print("❌ Recording finished unsuccessfully.")
+                    self.audioFileURL = nil
+                }
+            }
         }
     }
 
     func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
-        isRecording.send(false)
-        if let error = error {
-            errorPublisher.send(error)
-        }
-        if audioRecorder === recorder {
-            audioRecorder = nil
+        print("❌ Delegate: audioRecorderEncodeErrorDidOccur: \(error?.localizedDescription ?? "Unknown error")")
+        Task {
+            await MainActor.run {
+                self.cleanupAfterRecording()
+                self.audioFileURL = nil
+            }
         }
     }
 }

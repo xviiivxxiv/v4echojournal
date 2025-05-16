@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreData
+import LocalAuthentication // Import for LAError
 
 struct ContentView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -16,31 +17,103 @@ struct ContentView: View {
         animation: .default
     )
     private var items: FetchedResults<JournalEntryCD>
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Entry at \(item.createdAt ?? Date(), formatter: itemFormatter)")
-                    } label: {
-                        Text(item.createdAt ?? Date(), formatter: itemFormatter)
 
+    // Enum to track the flow within onboarding
+    enum OnboardingStep {
+        case welcome
+        case intention
+        case tone
+    }
+
+    @AppStorage("isOnboardingComplete") private var isOnboardingComplete: Bool = false
+    @AppStorage("isFaceIDEnabled") private var isFaceIDEnabled: Bool = false // Get Face ID setting
+    
+    @State private var currentOnboardingStep: OnboardingStep = .welcome
+    @State private var selectedIntention: String? = nil
+    @State private var selectedTone: String? = nil
+    
+    // Authentication State
+    @State private var isAuthenticated: Bool = false
+    @State private var authCheckComplete: Bool = false
+    @State private var authError: String? = nil
+
+    var body: some View {
+        Group {
+            if !authCheckComplete {
+                // Show loading indicator while checking/performing auth
+                ProgressView()
+                    .tint(Color.secondaryTaupe)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.backgroundCream.ignoresSafeArea())
+            } else if !isAuthenticated {
+                // Show locked view if auth failed or was cancelled
+                VStack(spacing: 20) {
+                    Image(systemName: "lock.fill")
+                        .font(.largeTitle)
+                        .foregroundColor(.secondaryTaupe)
+                    Text("Authentication Required")
+                        .font(.system(size: 24, weight: .medium, design: .default))
+                        .foregroundColor(.primaryEspresso)
+                    if let authError = authError {
+                        Text(authError)
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    Button("Try Again") {
+                        attemptAuthentication()
+                    }
+                    .buttonStyle(PillButtonStyle())
+                    .padding(.horizontal, 50)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.backgroundCream.ignoresSafeArea())
+            } else {
+                // Proceed to Onboarding or Home if authenticated
+                if isOnboardingComplete {
+                    // Wrap HomeView in NavigationStack to enable its NavigationLinks
+                    NavigationStack {
+                        HomeView()
+                    }
+                } else {
+                    // Onboarding Flow (remains outside NavigationStack initially)
+                    switch currentOnboardingStep {
+                    case .welcome:
+                        WelcomeView(onGetStarted: {
+                            withAnimation {
+                                currentOnboardingStep = .intention
+                            }
+                        })
+                    case .intention:
+                        OnboardingIntentionView(
+                            onIntentionSelected: { intention in
+                                print("Intention: \(intention)")
+                                selectedIntention = intention // Store selection
+                                withAnimation {
+                                    currentOnboardingStep = .tone
+                                }
+                            },
+                            onSkip: { completeOnboarding() }
+                        )
+                    case .tone:
+                        OnboardingToneView(
+                            onToneSelected: { tone in
+                                print("Tone: \(tone)")
+                                selectedTone = tone // Store selection
+                                completeOnboarding()
+                            },
+                            onSkip: { completeOnboarding() }
+                        )
                     }
                 }
-                .onDelete(perform: deleteItems)
             }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-            Text("Select an item")
         }
+        .onAppear {
+             attemptAuthentication()
+        }
+        // Apply the background color globally for the onboarding flow if needed
+        // or ensure each onboarding view sets its own background.
     }
 
     private func addItem() {
@@ -73,6 +146,68 @@ struct ContentView: View {
             }
         }
     }
+
+    // Mark onboarding as complete and transition to main app
+    private func completeOnboarding() {
+        // TODO: Persist selectedIntention and selectedTone if needed (e.g., UserDefaults, CoreData, ViewModel)
+        print("Onboarding Complete. Intention: \(selectedIntention ?? "N/A"), Tone: \(selectedTone ?? "N/A")")
+        withAnimation {
+            isOnboardingComplete = true
+        }
+    }
+
+    // Helper function to run the authentication check
+    private func attemptAuthentication() {
+        authError = nil // Clear previous error
+        
+        // If Face ID setting is disabled, consider user authenticated immediately
+        guard isFaceIDEnabled else {
+            print("Auth: Face ID not enabled, skipping check.")
+            isAuthenticated = true
+            authCheckComplete = true
+            return
+        }
+        
+        // If Face ID is enabled, attempt biometric auth
+        print("Auth: Face ID enabled, attempting biometrics...")
+        authCheckComplete = false // Reset check status for retry
+        AuthenticationService.shared.authenticateWithBiometrics { success, error in
+            isAuthenticated = success
+            if !success {
+                 // Use the error's localized description by default
+                 authError = error?.localizedDescription ?? "Authentication failed."
+                 
+                 // Check specific LAError codes for more user-friendly messages
+                 if let errorCode = error?.code { // Safely unwrap the error code
+                      switch errorCode {
+                      case .userCancel:
+                           authError = "Authentication cancelled."
+                      case .appCancel:
+                           authError = "Authentication cancelled by app."
+                      case .passcodeNotSet:
+                          authError = "No passcode set. Please set a passcode to use Face ID/Touch ID."
+                          // TODO: Optionally disable the toggle here?
+                          // isFaceIDEnabled = false 
+                      case .biometryNotAvailable:
+                          authError = "Face ID/Touch ID is not available on this device."
+                          // TODO: Optionally disable the toggle here?
+                          // isFaceIDEnabled = false
+                      case .biometryLockout:
+                          authError = "Too many failed attempts. Face ID/Touch ID is locked."
+                      case .authenticationFailed:
+                          // Keep the default localizedDescription for generic failures
+                          authError = error?.localizedDescription ?? "Authentication failed."
+                      // Add other cases as needed
+                      default:
+                          // Use the default localizedDescription if code is not specifically handled
+                          authError = error?.localizedDescription ?? "Authentication failed."
+                      }
+                 } 
+            }
+            authCheckComplete = true
+            print("Auth: Check complete. Success: \(success)")
+        }
+    }
 }
 
 private let itemFormatter: DateFormatter = {
@@ -83,5 +218,10 @@ private let itemFormatter: DateFormatter = {
 }()
 
 #Preview {
-    ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+    // Provide a preview, perhaps resetting onboarding state for testing
+    ContentView()
+        .onAppear {
+            // Uncomment to reset onboarding for preview
+            // UserDefaults.standard.removeObject(forKey: "isOnboardingComplete")
+        }
 }

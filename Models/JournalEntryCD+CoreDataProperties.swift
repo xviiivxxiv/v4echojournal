@@ -20,6 +20,8 @@ extension JournalEntryCD {
     @NSManaged public var createdAt: Date?
     @NSManaged public var entryText: String?
     @NSManaged public var id: UUID?
+    @NSManaged public var mood: String?
+    @NSManaged public var keywords: String?
     @NSManaged public var followups: NSSet?
 
 }

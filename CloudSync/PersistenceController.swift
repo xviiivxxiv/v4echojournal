@@ -40,21 +40,21 @@ class PersistenceController: ObservableObject {
 
         #if DEBUG
         if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
-            // Add sample data only if model is available
-            for i in 0..<5 {
-                let newItem = JournalEntryCD(context: viewContext)
-                newItem.id = UUID()
-                newItem.createdAt = Date().addingTimeInterval(-Double(i * 3600 * 24))
-                newItem.entryText = "Sample entry \(i)"
-                newItem.audioURL = "file:///preview/audio_\(i).m4a"
-            }
+        // Add sample data only if model is available
+        for i in 0..<5 {
+            let newItem = JournalEntryCD(context: viewContext)
+            newItem.id = UUID()
+            newItem.createdAt = Date().addingTimeInterval(-Double(i * 3600 * 24))
+            newItem.entryText = "Sample entry \(i)"
+            newItem.audioURL = "file:///preview/audio_\(i).m4a"
+        }
 
-            do {
-                try viewContext.save()
-            } catch {
-                let nsError = error as NSError
-                fatalError("❌ Preview context failed to save: \(nsError), \(nsError.userInfo)")
-            }
+        do {
+            try viewContext.save()
+        } catch {
+            let nsError = error as NSError
+            fatalError("❌ Preview context failed to save: \(nsError), \(nsError.userInfo)")
+        }
         }
         #endif
 
