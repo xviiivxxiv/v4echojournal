@@ -25,8 +25,8 @@ struct HomeView: View {
     var body: some View {
         NavigationStack { 
             ZStack(alignment: .bottom) { 
-                Color.backgroundCream
-                    .ignoresSafeArea()
+            Color.backgroundCream
+                .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     if selectedTab == .entry {
@@ -46,9 +46,9 @@ struct HomeView: View {
                 .padding(.bottom, estimatedTabBarVisualHeight) 
 
                 VStack(spacing: 0) {
-                    Spacer() 
+                Spacer()
                     bottomTabBar
-                }
+            }
                  .ignoresSafeArea(.container, edges: .bottom) 
 
             }
@@ -62,13 +62,13 @@ struct HomeView: View {
                 showRandomQuote()
             }
             viewModel.newlySavedEntry = nil
-        }
+            }
         .onChange(of: viewModel.newlySavedEntry) { _, newEntry in
              showConversation = (newEntry != nil)
         }
         .fullScreenCover(isPresented: $showConversation) {
              if let entry = viewModel.newlySavedEntry {
-                  NavigationView { 
+                  NavigationView {
                        ConversationView(journalEntry: entry)
                   }
              }
@@ -161,7 +161,7 @@ struct HomeView: View {
 
             Button("Show another quote") {
                 showRandomQuote()
-            }
+        }
             .font(.system(size: 14, weight: .medium, design: .rounded))
             .foregroundColor(Color.buttonBrown)
             .underline()
@@ -351,11 +351,11 @@ struct HomeView: View {
             return "Challenges"
         case .you:
             return "You"
-        }
     }
+}
 }
 
 #Preview {
-    HomeView()
-        .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+        HomeView()
+            .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
 }
