@@ -157,76 +157,77 @@ struct JournalEntryCardView: View {
         return formatter
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 15) {
-             // Time Display (Instead of Date, as date is now in the header)
-             Text(entry.createdAt ?? Date(), formatter: timeFormatter)
-                 // Apply brand body font (adjust size/weight)
-                 // .font(.custom("Very Vogue", size: 14).weight(.medium)) // Placeholder
-                 .font(.system(size: 14, weight: .medium, design: .default)) // SF Pro
-                 .foregroundColor(Color(hex: "#896A47")) // Accent color
-                 .frame(width: 70, alignment: .leading) // Adjust width if needed
-
-             // Snippet and Mood Display
-             VStack(alignment: .leading, spacing: 6) { // Increased spacing
-                  Text(entry.entryText ?? "No content")
-                     // Apply brand body font
-                     // .font(.custom("Very Vogue", size: 16)) // Placeholder
-                     .font(.system(size: 16, weight: .regular, design: .default)) // SF Pro
-                     .foregroundColor(Color(hex: "#5C4433")) // Main text color
-                     .lineLimit(2) // Updated line limit
-                     .frame(maxWidth: .infinity, alignment: .leading) // Take remaining space
-
-                  // Mood Tag (Placeholder - styling and data needed)
-                  if let mood = entry.mood, !mood.isEmpty {
-                      Text(mood.capitalized)
-                          // Apply brand body font
-                          // .font(.custom("Very Vogue", size: 12)) // Placeholder
-                          .font(.system(size: 12, weight: .medium, design: .rounded)) // SF Pro Rounded
-                          .padding(.horizontal, 10)
-                          .padding(.vertical, 4)
-                          .foregroundColor(moodTextColor(mood: mood)) // Dynamic text color
-                          .background(moodBackgroundColor(mood: mood)) // Dynamic background color
-                          .clipShape(Capsule())
-                  }
-         }
-
-              // Add subtle arrow indicator for navigation
-              Image(systemName: "chevron.right")
-                  .foregroundColor(Color(hex: "#B7A99A").opacity(0.6)) // Softer accent color
-                  .font(Font.system(.footnote, design: .default).weight(.semibold)) // Corrected SF Pro usage
-                  .padding(.leading, 5)
-
-         }
-         .padding()
-         // Use a lighter card background or just rely on main background
-         .background(Color.white.opacity(0.5)) // Subtle card background against #FDF9F3
-         .cornerRadius(12) // Slightly smaller corner radius
-         .shadow(color: Color(hex: "#5C4433").opacity(0.08), radius: 8, x: 0, y: 4) // Soft shadow using brand color
-    }
-
-    // Helper functions for mood tag styling (customize colors)
-    private func moodBackgroundColor(mood: String) -> Color {
-        switch mood.lowercased() {
-            case "anxious", "stressed", "overwhelmed", "angry": return Color.red.opacity(0.15)
-            case "sad", "lonely", "down": return Color.blue.opacity(0.15)
-            case "happy", "excited", "grateful", "joyful": return Color.green.opacity(0.15)
-            case "calm", "relaxed", "peaceful": return Color.teal.opacity(0.15)
-            case "tired", "exhausted": return Color.gray.opacity(0.15)
-            default: return Color(hex: "#B7A99A").opacity(0.2) // Default neutral
+    // Helper to get an emoji asset name for an emotion category (mirrors JournalEntryDetailView)
+    private func emojiAssetNameForFeelingCategory(_ category: String) -> String {
+        switch category.lowercased() {
+        case "great": return "emoji_great"
+        case "good": return "emoji_good"
+        case "fine": return "emoji_fine"
+        case "bad": return "emoji_bad"
+        case "terrible": return "emoji_terrible"
+        default: return "questionmark.circle" // SF Symbol as a fallback
         }
     }
 
-    private func moodTextColor(mood: String) -> Color {
-         switch mood.lowercased() {
-             case "anxious", "stressed", "overwhelmed", "angry": return Color.red.opacity(0.9)
-             case "sad", "lonely", "down": return Color.blue.opacity(0.9)
-             case "happy", "excited", "grateful", "joyful": return Color.green.opacity(0.9)
-             case "calm", "relaxed", "peaceful": return Color.teal.opacity(0.9)
-             case "tired", "exhausted": return Color.gray.opacity(0.9)
-             default: return Color(hex: "#5C4433").opacity(0.8) // Default text color
-         }
+    // Determine overall feeling emoji asset name (mirrors JournalEntryDetailView)
+    private var overallFeelingEmojiAssetName: String? {
+        guard let feelingsSet = entry.identifiedFeelings as? NSOrderedSet,
+              let feelings = feelingsSet.array as? [IdentifiedFeelingCD],
+              let firstFeeling = feelings.first(where: { $0.category != nil && !$0.category!.isEmpty }) else {
+            return nil
+        }
+        return emojiAssetNameForFeelingCategory(firstFeeling.category!)
     }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) { // Changed alignment to center, adjusted spacing
+            // Main content: Headline and Snippet
+            VStack(alignment: .leading, spacing: 4) { // Reduced spacing
+                if let headline = entry.headline, !headline.isEmpty {
+                    Text(headline)
+                        .font(.system(size: 17, weight: .semibold, design: .default)) // Prominent headline
+                        .foregroundColor(Color(hex: "#5C4433"))
+                        .lineLimit(2) // Allow headline to wrap
+                } else { // Fallback if no headline
+                    Text(entry.entryText ?? "Journal Entry")
+                        .font(.system(size: 17, weight: .semibold, design: .default))
+                        .foregroundColor(Color(hex: "#5C4433"))
+                        .lineLimit(1)
+                }
+                
+                Text(entry.entryText ?? "No content")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(Color(hex: "#896A47")) // Softer color for snippet
+                    .lineLimit(1) // Snippet line limit
+            }
+            .frame(maxWidth: .infinity, alignment: .leading) // Allow text to take available space
+
+            // Overall Feeling Emoji on the right
+            if let emojiName = overallFeelingEmojiAssetName {
+                Image(emojiName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36, height: 36) // Adjust size as needed
+            } else if let mood = entry.mood, !mood.isEmpty { // Fallback to old mood emoji if no identified feelings yet
+                Text(mood)
+                    .font(.system(size: 28))
+            }
+            
+            // Removed old time display and chevron from here, adjust as per full design
+            // Image(systemName: "chevron.right")
+            //     .foregroundColor(Color(hex: "#B7A99A").opacity(0.6))
+            //     .font(Font.system(.footnote, design: .default).weight(.semibold))
+
+        }
+        .padding(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)) // Adjusted padding
+        .background(Color.white) // Changed background to white as per inspo card
+        .cornerRadius(16) // Consistent corner radius
+        .shadow(color: Color.black.opacity(0.08), radius: 5, x: 0, y: 2) // Softer shadow
+    }
+
+    // Helper functions for mood tag styling (customize colors) - NO LONGER USED HERE
+    // private func moodBackgroundColor(mood: String) -> Color { ... }
+    // private func moodTextColor(mood: String) -> Color { ... }
 }
 
 // Preview needs adjustment if HistoryViewModel or JournalEntryRow changed significantly

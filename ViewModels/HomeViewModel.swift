@@ -19,11 +19,17 @@ class HomeViewModel: ObservableObject {
     @Published var newlySavedEntry: JournalEntryCD? = nil
     @Published var showOfflineAlert: Bool = false
 
+    // Modal Presentation State (NEW)
+    @Published var showDateInteractionModal: Bool = false
+    @Published var tappedDateForModal: Date? = nil
+    @Published var entryForTappedDate: JournalEntryCD? = nil
+
     // MARK: - Services
     private let audioRecorder: AudioRecordingService
     private let transcriptionService: TranscriptionServiceProtocol
     private let localAudioStorage: AudioStorageService
     private let coreDataStorage: JournalStorage
+    private let gptService: GPTService
 
     private var recordingData: Data? = nil
     private var cancellables = Set<AnyCancellable>()
@@ -33,12 +39,14 @@ class HomeViewModel: ObservableObject {
         audioRecorder: AudioRecordingService = AudioRecorder.shared,
         transcriptionService: TranscriptionServiceProtocol,
         localAudioStorage: AudioStorageService = LocalAudioStorage(),
-        coreDataStorage: JournalStorage = CoreDataStorage()
+        coreDataStorage: JournalStorage = CoreDataStorage(),
+        gptService: GPTService = GPTService.shared
     ) {
         self.audioRecorder = audioRecorder
         self.transcriptionService = transcriptionService
         self.localAudioStorage = localAudioStorage
         self.coreDataStorage = coreDataStorage
+        self.gptService = gptService
 
         audioRecorder.isRecordingPublisher
             .receive(on: DispatchQueue.main)
@@ -105,11 +113,13 @@ class HomeViewModel: ObservableObject {
             let transcription = try await transcriptionService.transcribe(data: data, mode: .ramble)
             logger.debug("Transcription service returned.")
             
-                transcribedText = transcription
-                statusMessage = "Transcription complete. Ready to save."
-                isLoading = false
+            transcribedText = transcription
+            statusMessage = "Transcription complete. Extracting keywords..."
+            isLoading = false
 
-                await saveJournalEntry()
+            // Directly call saveJournalEntry without keywords. Keywords will be processed later.
+            statusMessage = "Saving initial entry..."
+            await saveJournalEntry(extractedKeywords: nil)
 
             } catch {
             logger.error("Error caught in stopRecordingAndTranscribe: Error Type: \(String(describing: type(of: error))), Description: \(error.localizedDescription, privacy: .public)") 
@@ -119,7 +129,7 @@ class HomeViewModel: ObservableObject {
         }
     }
 
-    private func saveJournalEntry() async {
+    private func saveJournalEntry(extractedKeywords: String? = nil) async {
         guard let audioData = recordingData, !transcribedText.isEmpty else {
             errorMessage = "Error: Missing audio data or transcription text."
             statusMessage = "Cannot save. Missing data."
@@ -140,7 +150,8 @@ class HomeViewModel: ObservableObject {
                 id: entryId,
                 entryText: transcribedText,
                 audioURL: audioURL,
-                createdAt: Date()
+                createdAt: Date(),
+                keywords: extractedKeywords
             )
 
             statusMessage = "Entry saved!"
@@ -150,6 +161,20 @@ class HomeViewModel: ObservableObject {
 
             if let savedEntry = coreDataStorage.fetchEntry(byId: entryId) {
                 self.newlySavedEntry = savedEntry
+                // Save the initial transcribed text as the first message
+                do {
+                    try coreDataStorage.saveMessage(
+                        for: savedEntry, 
+                        text: savedEntry.entryText ?? "", // Use the text from the saved entry
+                        sender: "user", 
+                        timestamp: savedEntry.createdAt ?? Date() // Use the entry's creation date
+                    )
+                    logger.debug("Initial user message saved for entry ID: \(entryId)")
+                } catch {
+                    logger.error("Failed to save initial user message for entry ID: \(entryId). Error: \(error.localizedDescription)")
+                    // Optionally, set an error message for the UI if this failure is critical
+                    // self.errorMessage = "Failed to save initial message details."
+                }
             } else {
                 print("❌ Failed to fetch saved entry with ID: \(entryId)")
                 errorMessage = "Failed to fetch saved entry after saving."

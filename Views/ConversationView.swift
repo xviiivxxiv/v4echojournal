@@ -33,7 +33,8 @@ struct ConversationView: View {
             context: PersistenceController.shared.container.viewContext,
             gptService: GPTService.shared,
             transcriptionService: WhisperTranscriptionService.shared,
-            audioRecorder: AudioRecorder.shared
+            audioRecorder: AudioRecorder.shared,
+            journalStorage: CoreDataStorage()
         ))
         
         // Initialize chatMessages directly here if needed, or in onAppear
@@ -123,6 +124,9 @@ struct ConversationView: View {
                     showSessionEndView = true
                 }
             }
+        }
+        .onDisappear {
+            followUpLoopController.userDidEndConversation()
         }
     }
 

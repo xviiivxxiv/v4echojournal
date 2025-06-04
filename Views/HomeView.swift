@@ -5,6 +5,7 @@ struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel(
         transcriptionService: WhisperTranscriptionService.shared
     )
+    @State private var navigationPath = NavigationPath()
 
     @State private var showConversation = false
     @State private var currentQuote: String = "Tap below to see a quote."
@@ -22,8 +23,15 @@ struct HomeView: View {
     @State private var selectedTab: Tab = .entry
     private let estimatedTabBarVisualHeight: CGFloat = 75 // ADJUST THIS VALUE BY TESTING
 
+    // DateFormatter for the modal's date display (NEW)
+    private var toastDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d, EEE" // e.g., May 8, Thu
+        return formatter
+    }
+
     var body: some View {
-        NavigationStack { 
+        NavigationStack(path: $navigationPath) {
             ZStack(alignment: .bottom) { 
             Color.backgroundCream
                 .ignoresSafeArea()
@@ -38,6 +46,7 @@ struct HomeView: View {
                     }
                     
                     mainContentView
+                        .id(selectedTab)
                         .padding(.horizontal, 15)
                         .frame(maxWidth: .infinity, maxHeight: .infinity) 
                     
@@ -48,13 +57,86 @@ struct HomeView: View {
                 VStack(spacing: 0) {
                 Spacer()
                     bottomTabBar
-            }
+                }
                  .ignoresSafeArea(.container, edges: .bottom) 
 
+                // NEW: MODAL PRESENTATION LAYER (on top of everything else in this ZStack)
+                if viewModel.showDateInteractionModal { // viewModel is the HomeViewModel instance
+                    ZStack { // Root for modal: Blur + Content
+                        LightBlurView(style: .systemUltraThinMaterialLight)
+                            .ignoresSafeArea(.all) // Should now cover everything
+                            .onTapGesture {
+                                viewModel.showDateInteractionModal = false
+                            }
+                        
+                        // Optional: Scrim layer
+                        // Color.black.opacity(0.3).ignoresSafeArea(.all)
+
+                        VStack(spacing: 0) { // Content Layer
+                            Spacer()
+                            if let validDate = viewModel.tappedDateForModal {
+                                Text(validDate, formatter: toastDateFormatter)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(Color.black.opacity(0.6))
+                                    .padding(.bottom, 6)
+                            }
+                            ZStack { // Wrapper for DateInteractionModalView (your box)
+                                DateInteractionModalView(
+                                    selectedDate: viewModel.tappedDateForModal ?? Date(),
+                                    entry: viewModel.entryForTappedDate,
+                                    onDismiss: { viewModel.showDateInteractionModal = false },
+                                    onCreateEntryTapped: { 
+                                        print("HomeView: Create Entry tapped. Current tab: \(selectedTab)")
+                                        selectedTab = .entry
+                                        viewModel.tappedDateForModal = nil
+                                        viewModel.entryForTappedDate = nil
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.005) { 
+                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0)) {
+                                                viewModel.showDateInteractionModal = false 
+                                            }
+                                        }
+                                        print("HomeView: Switched to Entry tab. Modal dismissal scheduled with very short delay.")
+                                    },
+                                    onViewEntryTapped: { entryToView in // NEW: Implement navigation
+                                        print("HomeView: View Entry tapped for entry ID: \(entryToView.id?.uuidString ?? "N/A")")
+                                        // Dismiss modal first (with animation or immediately based on preference)
+                                        // Option 1: Dismiss immediately then navigate
+                                        // viewModel.showDateInteractionModal = false
+                                        // navigationPath.append(entryToView)
+
+                                        // Option 2: Navigate then let modal disappear (might be smoother if nav animation is quick)
+                                        // navigationPath.append(entryToView)
+                                        // viewModel.showDateInteractionModal = false 
+                                        
+                                        // Option 3: Coordinated dismissal and navigation (preferable)
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0)) {
+                                            viewModel.showDateInteractionModal = false
+                                        }
+                                        // Allow dismissal animation to start, then navigate.
+                                        // Or, if flicker is an issue, navigate before modal fully gone.
+                                        navigationPath.append(entryToView)
+                                    }
+                                )
+                            }
+                            .frame(maxWidth: UIScreen.main.bounds.width * 0.92)
+                            .cornerRadius(20)
+                            .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: 5)
+                            .padding(.bottom, 15) // Adjust this for lowness (e.g., 10, 15, 20)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    // Animation for the modal ZStack itself is now handled by the .animation on NavigationStack below.
+                }
+                // END OF NEW MODAL PRESENTATION LAYER
             }
             .navigationTitle(navigationTitleForSelectedTab())
             .navigationBarTitleDisplayMode(selectedTab == .entry ? .automatic : .inline) 
             .toolbar(selectedTab == .entry ? .hidden : .visible, for: .navigationBar) 
+            // Animation for modal presentation tied to HomeViewModel state
+            .animation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0), value: viewModel.showDateInteractionModal)
+            .navigationDestination(for: JournalEntryCD.self) { entryToView in
+                JournalEntryDetailView(entry: entryToView)
+            }
         }
         .onAppear {
             currentDate = formattedDate()
@@ -255,7 +337,7 @@ struct HomeView: View {
             case .challenges:
                 ChallengesView()
             case .you:
-                YouView()
+                YouView(homeViewModel: viewModel)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity) 

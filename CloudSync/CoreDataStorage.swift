@@ -3,11 +3,15 @@ import CoreData
 
 // Protocol defining the storage operations
 protocol JournalStorage {
-    func saveEntry(id: UUID, entryText: String, audioURL: URL, createdAt: Date) throws
+    func saveEntry(id: UUID, entryText: String, audioURL: URL, createdAt: Date, keywords: String?) throws
     func fetchAllEntries() throws -> [JournalEntry] // Return the DTO struct
     func fetchEntry(byId id: UUID) -> JournalEntryCD? // Fetch the Managed Object
     func deleteEntry(id: UUID) throws
     func saveFollowUp(question: String, for entry: JournalEntryCD) throws // Add method for follow-up
+    func saveMessage(for entry: JournalEntryCD, text: String, sender: String, timestamp: Date) throws
+    func savePhoto(for entry: JournalEntryCD, imageData: Data, caption: String?, timestamp: Date) throws
+    func updateKeywordsAndHeadline(for entry: JournalEntryCD, keywords: [String], headline: String?) throws // New method signature
+    func saveIdentifiedFeelings(for entry: JournalEntryCD, feelings: [(name: String, category: String)]) throws // Added
 }
 
 class CoreDataStorage: JournalStorage {
@@ -24,14 +28,56 @@ class CoreDataStorage: JournalStorage {
     ///   - entryText: The transcribed text.
     ///   - audioURL: The file URL of the saved audio recording.
     ///   - createdAt: The timestamp when the entry was created.
+    ///   - keywords: Optional comma-separated string of keywords.
     /// - Throws: An error if saving fails.
-    func saveEntry(id: UUID = UUID(), entryText: String, audioURL: URL, createdAt: Date = Date()) throws {
+    func saveEntry(id: UUID = UUID(), entryText: String, audioURL: URL, createdAt: Date = Date(), keywords: String? = nil) throws {
         // Create a new managed object instance
         let newEntryCD = JournalEntryCD(context: context) // Use the auto-generated class name
         newEntryCD.id = id
         newEntryCD.entryText = entryText
         newEntryCD.audioURL = audioURL.absoluteString // Store URL as String
         newEntryCD.createdAt = createdAt
+        newEntryCD.keywords = keywords // Assign keywords
+
+        // --- Add logic for highestStreak --- 
+        let streakManager = StreakManager()
+        var allEntries: [JournalEntryCD] = [] // To hold previously saved entries
+
+        let fetchRequest: NSFetchRequest<JournalEntryCD> = JournalEntryCD.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \JournalEntryCD.createdAt, ascending: false)]
+        // Exclude the current unsaved newEntryCD from this initial fetch if it's already in the context's insertedObjects
+        // However, it's safer to fetch all and then construct the list for current streak calculation carefully.
+        do {
+            allEntries = try context.fetch(fetchRequest)
+        } catch {
+            print("Error fetching existing entries for streak calculation: \(error.localizedDescription)")
+            // Decide if this error should prevent saving or just save without streak calculation.
+            // For now, we'll proceed and highestStreak might be 0 or based on an empty list.
+        }
+
+        // Calculate current streak *as if* the new entry is part of the set
+        // To do this, we consider a list that includes the new entry's date along with other entries.
+        // A simple way is to pass all entries (including the new one once it's part of 'allEntries' effectively after this save)
+        // Or, more accurately for `calculateCurrentStreak` as written:
+        // Create a temporary list of entries for current streak calculation that includes the new one.
+        // The `StreakManager.calculateCurrentStreak` expects an array of JournalEntryCD.
+        // Since newEntryCD is not yet saved and might not be in `allEntries` from fetch, we add it to a temporary list.
+        var entriesForCurrentStreakCalc = allEntries
+        // Ensure the new entry is only considered once and correctly.
+        // If `newEntryCD` is already in `allEntries` (e.g., if fetch includes uncommitted changes, though unlikely with default fetch), avoid duplication.
+        if !allEntries.contains(where: { $0.objectID == newEntryCD.objectID }) {
+             entriesForCurrentStreakCalc.append(newEntryCD)
+        }
+        // And sort it again because the new entry might not be in the correct order yet
+        entriesForCurrentStreakCalc.sort { $0.createdAt ?? Date.distantPast > $1.createdAt ?? Date.distantPast }
+
+        let currentStreak = streakManager.calculateCurrentStreak(from: entriesForCurrentStreakCalc)
+        
+        // Get overall highest streak from *previously existing* entries (before this new one)
+        let overallHighestStreakBeforeThisEntry = streakManager.getOverallHighestStreak(from: allEntries)
+        
+        newEntryCD.highestStreak = Int16(max(currentStreak, overallHighestStreakBeforeThisEntry))
+        // --- End logic for highestStreak ---
 
         // Save the context
         do {
@@ -119,6 +165,123 @@ class CoreDataStorage: JournalStorage {
         } catch {
             print("Error saving follow-up question: \(error.localizedDescription)")
             context.rollback() // Roll back if save fails
+            throw error
+        }
+    }
+
+    /// Saves a new conversation message linked to a specific journal entry.
+    /// - Parameters:
+    ///   - entry: The `JournalEntryCD` managed object to link the message to.
+    ///   - text: The content of the message.
+    ///   - sender: The sender of the message (e.g., "user", "ai").
+    ///   - timestamp: The time the message was sent.
+    /// - Throws: An error if saving fails.
+    func saveMessage(for entry: JournalEntryCD, text: String, sender: String, timestamp: Date) throws {
+        let newMessage = ConversationMessage(context: context)
+        newMessage.id = UUID()
+        newMessage.text = text
+        newMessage.sender = sender
+        newMessage.timestamp = timestamp
+        newMessage.journalEntry = entry // Set the to-one relationship
+
+        // Add the message to the entry's ordered set of messages
+        // This assumes 'messages' is the name of the to-many relationship in JournalEntryCD
+        // and that it's an NSOrderedSet.
+        entry.addToMessages(newMessage)
+
+        do {
+            try context.save()
+            print("Conversation message saved successfully for entry: \(entry.id?.uuidString ?? "N/A")")
+        } catch {
+            print("Error saving conversation message: \(error.localizedDescription)")
+            context.rollback() // Roll back if save fails
+            throw error
+        }
+    }
+
+    /// Saves a new photo linked to a specific journal entry.
+    /// - Parameters:
+    ///   - entry: The `JournalEntryCD` managed object to link the photo to.
+    ///   - imageData: The raw data of the photo.
+    ///   - caption: An optional caption for the photo.
+    ///   - timestamp: The time the photo was added.
+    /// - Throws: An error if saving fails.
+    func savePhoto(for entry: JournalEntryCD, imageData: Data, caption: String?, timestamp: Date = Date()) throws {
+        let newPhoto = JournalPhoto(context: context)
+        newPhoto.id = UUID()
+        newPhoto.imageData = imageData
+        newPhoto.caption = caption
+        newPhoto.timestamp = timestamp
+        newPhoto.journalEntry = entry // Set the to-one relationship
+
+        // Add the photo to the entry's ordered set of photos
+        // This assumes 'photos' is the name of the to-many relationship in JournalEntryCD
+        // and that it's an NSOrderedSet.
+        entry.addToPhotos(newPhoto)
+
+        do {
+            try context.save()
+            print("Photo saved successfully for entry: \(entry.id?.uuidString ?? "N/A")")
+        } catch {
+            print("Error saving photo: \(error.localizedDescription)")
+            context.rollback() // Roll back if save fails
+            throw error
+        }
+    }
+
+    /// Updates the keywords and headline for an existing journal entry.
+    /// - Parameters:
+    ///   - entry: The `JournalEntryCD` managed object to update.
+    ///   - keywords: An array of keyword strings.
+    ///   - headline: An optional headline string.
+    /// - Throws: An error if saving fails.
+    func updateKeywordsAndHeadline(for entry: JournalEntryCD, keywords: [String], headline: String?) throws {
+        entry.keywords = keywords.joined(separator: ", ")
+        entry.headline = headline // Save the new headline
+        
+        do {
+            try context.save()
+            print("Keywords and headline updated successfully for entry: \(entry.id?.uuidString ?? "N/A")")
+        } catch {
+            print("Error updating keywords and headline: \(error.localizedDescription)")
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// Saves identified feelings for a journal entry. This will clear existing identified feelings for the entry before saving new ones.
+    /// - Parameters:
+    ///   - entry: The `JournalEntryCD` managed object to associate feelings with.
+    ///   - feelings: An array of tuples, each containing the feeling name and category.
+    /// - Throws: An error if saving fails.
+    func saveIdentifiedFeelings(for entry: JournalEntryCD, feelings: [(name: String, category: String)]) throws {
+        // Clear existing identified feelings for this entry to prevent duplicates if re-processing
+        if let existingFeelings = entry.identifiedFeelings as? NSSet {
+            for feeling in existingFeelings {
+                if let feelingToDelete = feeling as? IdentifiedFeelingCD {
+                    context.delete(feelingToDelete)
+                }
+            }
+        }
+        entry.identifiedFeelings = NSOrderedSet() // Reset to empty ordered set
+
+        // Add new feelings
+        for feelingData in feelings {
+            let newFeeling = IdentifiedFeelingCD(context: context)
+            newFeeling.id = UUID()
+            newFeeling.name = feelingData.name
+            newFeeling.category = feelingData.category
+            newFeeling.timestamp = Date()
+            newFeeling.journalEntry = entry // Link to the journal entry
+            entry.addToIdentifiedFeelings(newFeeling) // Add to the ordered set
+        }
+
+        do {
+            try context.save()
+            print("Identified feelings (\(feelings.count)) saved successfully for entry: \(entry.id?.uuidString ?? "N/A")")
+        } catch {
+            print("Error saving identified feelings: \(error.localizedDescription)")
+            context.rollback()
             throw error
         }
     }
