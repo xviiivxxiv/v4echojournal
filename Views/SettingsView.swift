@@ -2,194 +2,289 @@ import SwiftUI
 import UserNotifications // Import UserNotifications framework
 
 struct SettingsView: View {
-    // Use AppStorage to persist settings
-    @AppStorage("selectedAIResponseTone") private var selectedTone: String = "Supportive" // Default
-    @AppStorage("isFaceIDEnabled") private var isFaceIDEnabled: Bool = false
-    @AppStorage("reminderTime") private var reminderTime: Date = Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: Date()) ?? Date()
-    @AppStorage("areRemindersEnabled") private var areRemindersEnabled: Bool = false
+    // MARK: - Properties
     
+    // Environment
     @Environment(\.dismiss) private var dismiss
-
-    let availableTones = ["Supportive", "Curious", "Neutral", "Direct"]
     
-    // State to disable date picker if permission denied
+    // State for notification permission
     @State private var notificationPermissionGranted = false
+    
+    // Auth Service and Settings Manager
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var settings: SettingsManager
+    @EnvironmentObject var authFlow: AuthenticationFlowManager
+    
+    // State for presenting auth sheet
+    @State private var showingAuthSheet = false
+    
+    // State for erase data alert
+    @State private var showingEraseAlert = false
 
     var body: some View {
-        NavigationView { // Embed in NavigationView for Title and potential toolbar items
+        NavigationView {
             ZStack {
-                Color.backgroundCream.ignoresSafeArea()
+                // Use a grouped-style background color for consistency
+                Color(.systemGroupedBackground).ignoresSafeArea()
 
-                VStack(alignment: .leading, spacing: 20) {
-                    
-                    // Tone Selector Section
-                    Text("AI Response Tone")
-                        .font(.system(size: 20, weight: .medium, design: .default)) // SF Pro
-                        .foregroundColor(.primaryEspresso)
-                    Picker("Response Tone", selection: $selectedTone) {
-                        ForEach(availableTones, id: \.self) { tone in
-                            Text(tone).font(.system(size: 16, weight: .regular, design: .default)) // SF Pro
+                Form {
+                    // MARK: - Premium & Account Section
+                    Section {
+                        if authService.user != nil {
+                            accountView
+                        } else {
+                            signInView
                         }
                     }
-                    .pickerStyle(.segmented) // Or .menu
-                    .background(Color.accentPaleGrey.opacity(0.5))
-                    .cornerRadius(8)
-                    .tint(Color.buttonBrown) // Color for the selected segment
                     
-                    Divider()
-                    
-                    // Face ID Toggle Section
-                    Toggle(isOn: $isFaceIDEnabled) {
-                        Text("Enable Face ID / Touch ID")
-                            .font(.system(size: 17, weight: .regular, design: .default)) // SF Pro
-                            .foregroundColor(.primaryEspresso)
-                    }
-                    .tint(Color.buttonBrown) // Color for the toggle switch
-                    
-                    Divider()
-                    
-                    // Reminder Section
-                    Text("Daily Reminder")
-                         .font(.system(size: 20, weight: .medium, design: .default)) // SF Pro
-                         .foregroundColor(.primaryEspresso)
-                    
-                    Toggle(isOn: $areRemindersEnabled.animation()) {
-                        Text("Enable Reminders")
-                            .font(.system(size: 17, weight: .regular, design: .default)) // SF Pro
-                            .foregroundColor(.primaryEspresso)
-                    }
-                    .tint(Color.buttonBrown)
-                    .onChange(of: areRemindersEnabled) { _, enabled in
-                         if enabled {
-                              // Request permission when toggle is turned on
-                              requestNotificationPermission { granted in
-                                   notificationPermissionGranted = granted
-                                   if granted {
-                                        scheduleNotification()
-                                   } else {
-                                        // If permission denied, turn toggle back off
-                                        areRemindersEnabled = false
-                                        // Optionally show an alert guiding user to settings
-                                   }
-                              }
-                         } else {
-                              cancelNotifications()
-                         }
+                    // MARK: - General Section
+                    Section(header: Text("General").font(.system(size: 14, weight: .regular, design: .default))) {
+                        NavigationLink(destination: NotificationSettingsView()) {
+                            SettingsRowView(title: "Notifications", iconName: "bell.fill", iconColor: .yellow)
+                        }
+                        NavigationLink(destination: EditNameView()) {
+                            SettingsRowView(title: "Edit Name", iconName: "pencil", iconColor: .orange)
+                        }
+                        // For language, we link to the app's settings in the iOS Settings app
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            Link(destination: url) {
+                                SettingsRowView(title: "Language", iconName: "globe", iconColor: .blue)
+                            }
+                        }
                     }
                     
-                    if areRemindersEnabled && notificationPermissionGranted {
-                        DatePicker("Reminder Time", selection: $reminderTime, displayedComponents: .hourAndMinute)
-                            .font(.system(size: 16, weight: .regular, design: .default)) // SF Pro
-                            .foregroundColor(.primaryEspresso)
-                            .tint(Color.buttonBrown)
-                            .onChange(of: reminderTime) { _, _ in scheduleNotification() }
-                    } else if areRemindersEnabled && !notificationPermissionGranted {
-                         // Show if toggle is on but permission was denied
-                         Text("Please enable notification permissions in the Settings app.")
-                              .font(.system(size: 14, weight: .regular, design: .default)) // SF Pro
-                              .foregroundColor(.secondaryTaupe)
+                    // MARK: - Security Section
+                    Section(header: Text("Security").font(.system(size: 14, weight: .regular, design: .default))) {
+                        NavigationLink(destination: PasscodeSettingsView()) {
+                            SettingsRowView(title: "Passcode & Face ID", iconName: "lock.shield.fill", iconColor: .green)
+                        }
+                        
+                        Toggle(isOn: $settings.stayLoggedIn) {
+                            SettingsRowView(title: "Stay Logged In", subtitle: settings.stayLoggedIn ? "On" : "Off", iconName: "person.badge.key.fill", iconColor: .blue)
+                        }
+                        .tint(Color.buttonBrown)
                     }
 
-                    Spacer() // Push content to top
+                    // MARK: - Support & Legal Section
+                    Section(header: Text("Support").font(.system(size: 14, weight: .regular, design: .default))) {
+                        Button(action: openSupportEmail) {
+                            SettingsRowView(title: "Contact Support", iconName: "bubble.left.and.bubble.right.fill", iconColor: .gray)
+                    }
+                        
+                        Button(action: copyUserID) {
+                           SettingsRowView(title: "Copy My ID", iconName: "doc.on.doc.fill", iconColor: .purple)
+                        }
+                    }
+
+                    Section {
+                         Link(destination: URL(string: "https://www.example.com/terms")!) {
+                            SettingsRowView(title: "Terms of Use", iconName: "doc.text.fill", iconColor: .secondary)
+                        }
+                         Link(destination: URL(string: "https://www.example.com/privacy")!) {
+                            SettingsRowView(title: "Privacy Policy", iconName: "hand.raised.fill", iconColor: .secondary)
+                        }
+                    }
+
+                    // MARK: - Data Management Section
+                    Section {
+                        Button(action: {
+                            // Show the confirmation alert
+                            showingEraseAlert = true
+                        }) {
+                            HStack {
+                                Spacer()
+                                Text("Erase Personal Data")
+                                    .foregroundColor(.red)
+                                Spacer()
+                            }
+                        }
+                    }
+                    
+                    // Sign Out Button
+                    if authService.user != nil {
+                        Section {
+                            Button(action: {
+                                authService.signOut()
+                            }) {
+                                HStack {
+                                    Spacer()
+                                    Text("Sign Out")
+                                        .foregroundColor(.red)
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+
+                    #if DEBUG
+                    Section(header: Text("🧪 Debug & Testing").font(.system(size: 14, weight: .regular, design: .default))) {
+                        Button("Reset All Settings") {
+                            settings.resetForTesting()
+                            authFlow.resetAuthenticationState()
+                        }
+                        .foregroundColor(.orange)
+                        
+                        Button("Simulate New User") {
+                            authFlow.simulateNewUser()
+                        }
+                        .foregroundColor(.blue)
+                        
+                        Button("Simulate Returning User (Face ID)") {
+                            authFlow.simulateReturningUserWithFaceID()
+                        }
+                        .foregroundColor(.green)
+                        
+                        Button("Debug Current State") {
+                            settings.debugCurrentState()
+                            authFlow.debugCurrentState()
+                        }
+                        .foregroundColor(.purple)
+                        
+                        Button("Force Flow Re-evaluation") {
+                            authFlow.forceFlowReevaluation()
+                        }
+                        .foregroundColor(.cyan)
+                        
+                        Button("Force Sign Out") {
+                            Task {
+                                await authService.signOut()
+                            }
+                        }
+                        .foregroundColor(.red)
+                    }
+                    #endif
                 }
-                .padding()
+                .sheet(isPresented: $showingAuthSheet) {
+                    AuthenticationView()
+                        .environmentObject(authService)
+                }
+                .alert("Are you sure?", isPresented: $showingEraseAlert) {
+                    Button("Delete All Data", role: .destructive) {
+                        // Perform the erasure
+                        DataManager.eraseAllData()
+                        
+                        // After erasing, you might want to force the app to restart
+                        // or navigate to a specific view (e.g., onboarding).
+                        // For now, we just dismiss the settings view.
+                        dismiss()
+                    }
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("This action is permanent and cannot be undone. All journal entries, settings, and personal data will be deleted.")
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { // Changed to leading
-                    Button("Close") {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(action: {
                         dismiss()
+                        }) {
+                           Image(systemName: "chevron.left")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.primaryEspresso)
+                        }
                     }
-                    .font(.system(size: 16, weight: .medium, design: .rounded)) // SF Pro Rounded
-                    .foregroundColor(.buttonBrown)
                 }
             }
-            .onAppear(perform: checkNotificationPermission) // Check permission status on appear
+            .onAppear {
+                // We can add any necessary on-appear logic here later
+            }
         }
     }
     
-    // MARK: - Notification Logic
+    // MARK: - Subviews
     
-    private var notificationCenter: UNUserNotificationCenter {
-         UNUserNotificationCenter.current()
-    }
-    private let notificationIdentifier = "dailyReflectionReminder"
-
-    // Check current permission status
-    func checkNotificationPermission() {
-        notificationCenter.getNotificationSettings { settings in
-             DispatchQueue.main.async {
-                  notificationPermissionGranted = (settings.authorizationStatus == .authorized)
-                  // If permission granted but toggle is off, do nothing.
-                  // If permission not granted but toggle *was* on, turn it off.
-                  if !notificationPermissionGranted && areRemindersEnabled {
-                       areRemindersEnabled = false
+    private var accountView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+             HStack {
+                  // Display user's email if available
+                  Text(authService.user?.email ?? "Your Account")
+                       .font(.system(size: 17, weight: .semibold, design: .default))
+                  Spacer()
+                  // TODO: Check premium status from a different service later
+                  Image(systemName: "diamond.fill")
+                       .foregroundColor(.yellow)
+             }
+             NavigationLink(destination: Text("Upgrade Plan View")) {
+                  Text("Manage Subscription")
+                       .font(.system(size: 15))
+                       .foregroundColor(.secondary)
                   }
              }
         }
-    }
 
-    // Request permission (callback indicates success/failure)
-    func requestNotificationPermission(completion: @escaping (Bool) -> Void) {
-        notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("Notification permission error: \(error.localizedDescription)")
-                    completion(false)
-                } else {
-                    print("Notification permission granted: \(granted)")
-                    completion(granted)
-                }
+    private var signInView: some View {
+         Button(action: {
+             showingAuthSheet = true
+         }) {
+             HStack(spacing: 15) {
+                 Image(systemName: "person.fill")
+                     .font(.title2)
+                     .foregroundColor(.white)
+                     .background(Circle().fill(Color.gray).frame(width: 32, height: 32))
+                 Text("Sign In")
+                      .font(.system(size: 17, weight: .regular, design: .default))
             }
         }
     }
     
-    // Schedule the daily notification
-    func scheduleNotification() {
-        // Ensure toggle is on and permission granted
-        guard areRemindersEnabled, notificationPermissionGranted else { 
-             print("Cannot schedule notification: Reminders disabled or permission not granted.")
-             return
-         }
-
-        // Content
-        let content = UNMutableNotificationContent()
-        content.title = "Time to Reflect"
-        content.body = "Take a moment for yourself with Heard."
-        content.sound = .default
-
-        // Trigger (Daily at user-specified time)
-        let dateComponents = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-
-        // Request
-        let request = UNNotificationRequest(identifier: notificationIdentifier,
-                                            content: content,
-                                            trigger: trigger)
-
-        // Remove old before adding new
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [notificationIdentifier])
+    // MARK: - Helper Functions
+    
+    private func copyUserID() {
+        let userIDKey = "appUserID"
+        var userID = UserDefaults.standard.string(forKey: userIDKey)
         
-        // Add Request
-        notificationCenter.add(request) { error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("Error scheduling notification: \(error.localizedDescription)")
-                    // Optionally show an error to the user?
-                } else {
-                    print("Daily reminder scheduled successfully for \(dateComponents.hour ?? -1):\(dateComponents.minute ?? -1)")
-                }
-            }
+        if userID == nil {
+            let newUserID = UUID().uuidString
+            UserDefaults.standard.set(newUserID, forKey: userIDKey)
+            userID = newUserID
         }
+        
+        UIPasteboard.general.string = userID
+        
+        // Optionally, show a confirmation to the user
+        print("User ID copied to clipboard: \(userID ?? "N/A")")
     }
     
-    // Cancel pending notifications
-    func cancelNotifications() {
-        print("Cancelling pending daily reminders...")
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [notificationIdentifier])
+    private func openSupportEmail() {
+        let email = "support@yourapp.com" // Replace with your support email
+        if let url = URL(string: "mailto:\(email)") {
+            if UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+            }
+        }
     }
 }
+
+// MARK: - Reusable Settings Row
+struct SettingsRowView: View {
+    let title: String
+    var subtitle: String? = nil
+    let iconName: String
+    let iconColor: Color
+
+    var body: some View {
+        HStack(spacing: 15) {
+            Image(systemName: iconName)
+                .font(.title2)
+                .foregroundColor(iconColor)
+                .frame(width: 32)
+            
+            VStack(alignment: .leading) {
+                Text(title)
+                    .font(.system(size: 17, weight: .regular, design: .default))
+                    .foregroundColor(.primary)
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4) // Add some padding for better spacing
+    }
+}
+
 
 #Preview {
     SettingsView()

@@ -35,6 +35,35 @@ extension JournalEntryCD {
         return count
     }
 
+    // Helper to get an emoji asset name for an emotion category
+    // This mirrors the logic in JournalEntryDetailView and DateInteractionModalView for consistency
+    private func emojiAssetNameForFeelingCategory(_ category: String) -> String {
+        switch category.lowercased() {
+        case "great": return "emoji_great"
+        case "good": return "emoji_good"
+        case "fine": return "emoji_fine"
+        case "bad": return "emoji_bad"
+        case "terrible": return "emoji_terrible"
+        default: return "questionmark.circle" // SF Symbol as a fallback for unknown category
+        }
+    }
+
+    /// Determines the overall feeling emoji asset name for the calendar display.
+    /// Prioritizes userSelectedFeelingCategory, then falls back to the first identified feeling.
+    var feelingEmojiAssetName: String? {
+        if let userSelectedCategory = self.userSelectedFeelingCategory, !userSelectedCategory.isEmpty {
+            return emojiAssetNameForFeelingCategory(userSelectedCategory)
+        }
+        // Fallback to identified feelings if no user selection
+        guard let feelingsSet = self.identifiedFeelings as? NSOrderedSet,
+              let feelings = feelingsSet.array as? [IdentifiedFeelingCD],
+              let firstFeelingWithCategory = feelings.first(where: { $0.category != nil && !$0.category!.isEmpty }) else {
+            // If no feelings or categories, no specific emoji to show
+            return nil 
+        }
+        return emojiAssetNameForFeelingCategory(firstFeelingWithCategory.category!)
+    }
+
     // You could add other useful computed properties here in the future, e.g.:
     // var totalConversationMessagesCount: Int {
     //     return (self.messages as? NSOrderedSet)?.count ?? 0

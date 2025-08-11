@@ -831,4 +831,99 @@ final class GPTService {
             task.resume()
         }
     }
+
+    // MARK: - Generate Literature Comparison
+    func generateLiteratureComparison(wordCount: Int) async throws -> String {
+        guard wordCount > 0 else {
+            print("⚠️ GPTService: Word count is zero or less, skipping literature comparison.")
+            return "" // Or a default message like "Start journaling to see a comparison!"
+        }
+        guard let client = openAIClient, let token = client.configuration.token else {
+            throw GPTError.setupError("OpenAI client or token not initialized for literature comparison.")
+        }
+
+        print("▶️ GPTService calling generateLiteratureComparison for word count: \(wordCount).")
+
+        let apiEndpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: apiEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+
+        let prompt = """
+        A user has written a journal with a total of \(wordCount) words.
+        Provide a single, encouraging, and slightly whimsical sentence that compares this word count to the approximate length of a well-known piece of literature (e.g., a famous poem, short story, novella, or even a chapter from a longer book).
+        The comparison should be positive and make the user feel good about their journaling progress.
+        Example phrasing: "With \(wordCount) words, your journal is already as long as [Famous Short Story Title]!" or "Your journal of \(wordCount) words is like crafting your own [Type of Literary Work], similar in length to [Famous Poem/Chapter]!"
+        Be creative and try to pick a piece of literature that isn't excessively long, so the comparison feels achievable or relatable.
+        Return only the single sentence comparison.
+
+        Comparison sentence:
+        """
+        print("  GPTService: [Literature Comparison] Generated prompt (first 100 chars): \(String(prompt.prefix(100)))..." )
+
+        let messagesPayload = [ChatMessagePayload(role: "user", content: prompt)]
+        let requestBody = ChatCompletionRequestBody(
+            model: "gpt-3.5-turbo", // Using 3.5-turbo for this creative task, can be gpt-4 if preferred
+            messages: messagesPayload,
+            max_tokens: 100, // Max tokens for a single sentence response
+            temperature: 0.75 // Higher temperature for more creative/varied comparisons
+        )
+
+        do {
+            let jsonData = try JSONEncoder().encode(requestBody)
+            request.httpBody = jsonData
+        } catch let encodingError {
+            print("❌ GPTService: [Literature Comparison] JSONEncoding error: \(encodingError.localizedDescription)")
+            throw GPTError.messageEncodingFailed
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            print("  GPTService: [Literature Comparison] Preparing URLSessionDataTask...")
+            let task = URLSession.shared.dataTask(with: request) { data, response, error in
+                print("  GPTService: [Literature Comparison] URLSessionDataTask completion handler invoked.")
+                if let error = error {
+                    print("❌ GPTService: [Literature Comparison] URLSessionDataTask error: \(error.localizedDescription)")
+                    continuation.resume(throwing: GPTError.requestFailed(error))
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse, let data = data else {
+                    print("❌ GPTService: [Literature Comparison] Invalid response or no data.")
+                    continuation.resume(throwing: GPTError.invalidResponse)
+                    return
+                }
+                let responseBodyForLogging = String(data: data, encoding: .utf8) ?? "Could not decode response body"
+                print("  GPTService: [Literature Comparison] HTTP status: \(httpResponse.statusCode). Body (first 200 chars): \(String(responseBodyForLogging.prefix(200)))..." )
+                
+                guard httpResponse.statusCode == 200 else {
+                    print("❌ GPTService: [Literature Comparison] Non-200 HTTP status: \(httpResponse.statusCode)." )
+                    continuation.resume(throwing: GPTError.invalidResponse)
+                    return
+                }
+                
+                do {
+                    let decodedResponse = try JSONDecoder().decode(FlexibleChatCompletionResponse.self, from: data)
+                    guard let firstChoice = decodedResponse.choices.first, let content = firstChoice.message.content else {
+                        print("❌ GPTService: [Literature Comparison] Invalid response structure or missing content.")
+                        continuation.resume(throwing: GPTError.invalidResponse)
+                        return
+                    }
+                    let comparisonSentence = content.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"")))
+                    print("  GPTService: [Literature Comparison] Raw comparison sentence: '\(comparisonSentence)'")
+                    if comparisonSentence.isEmpty {
+                        print("⚠️ GPTService: [Literature Comparison] Received empty sentence from API.")
+                         continuation.resume(returning: "Keep writing to see how your journal grows!") // Fallback message
+                    } else {
+                        continuation.resume(returning: comparisonSentence)
+                    }
+                } catch let decodingError {
+                    print("❌ GPTService: [Literature Comparison] Decoding error: \(decodingError)")
+                    continuation.resume(throwing: GPTError.invalidResponse)
+                }
+            }
+            print("  GPTService: [Literature Comparison] Starting URLSessionDataTask...")
+            task.resume()
+        }
+    }
 }

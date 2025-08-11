@@ -23,21 +23,22 @@ struct YouView: View {
 
     // Calendar State
     @State private var displayedMonth: Date = Date() // Start with the current month
-    @State private var journalEntryDaysInMonth: Set<Date> = []
+    @State private var journalEntriesMapInMonth: [Date: JournalEntryCD] = [:] // NEW
+
+    // Stats Summary State
+    @State private var totalUserWords: Int = 0 // NEW for words in journal
+    @State private var literatureComparisonText: String = "" // Initialized empty, will be updated
 
     // Placeholder data (can be removed or updated as needed)
     @State private var longestStreak: Int = 0 // This might be redundant if overallHighestStreak is used
     @State private var weeksInJournal: Int = 0 // Placeholder, update if you have this logic
     @State private var totalEntries: Int = 0   // Placeholder, update if you have this logic
-    @State private var quoteOfTheWeek: String = "The best way to predict the future is to create it."
-    // Placeholder for calendar - will be a simple grid representation
-    // Placeholder for mood data
 
     var body: some View {
         ZStack { // Root ZStack of YouView
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 25) {
-                    // Title for the "You" screen - managed by HomeView's navigationTitle
+                    customHeaderForYouView
                     
                     progressSection
                     
@@ -45,16 +46,13 @@ struct YouView: View {
                     
                     statsSummarySection
                     
-                    quoteOfTheWeekSection
-                    
-                    moodSection
-                    
                     Spacer() // Ensures content pushes to the top if not enough to fill screen
                 }
                 .padding()
             }
             .background(Color.backgroundCream.ignoresSafeArea()) // Ensure background matches app theme
         }
+        .navigationBarHidden(true)
         .animation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0), value: displayedMonth)
         .onAppear {
             // Initial data load
@@ -71,6 +69,30 @@ struct YouView: View {
             updateCalendarDaysForDisplayedMonth(entries: Array(allJournalEntries))
         }
         // .navigationTitle("You") // This will be set by HomeView
+    }
+
+    // MARK: - Custom Header for YouView
+    @ViewBuilder
+    private var customHeaderForYouView: some View {
+        HStack {
+            Spacer() // Pushes "you" text and icon away from leading edge
+            
+            Text("you") 
+                .font(.system(size: 24, weight: .bold))
+                .foregroundColor(Color(hex: "5C4433"))
+                .textCase(.lowercase)
+            
+            Spacer() // Allows "you" text to center, pushes icon to trailing
+
+            NavigationLink(destination: SettingsView()) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundColor(Color(hex: "5C4433")) 
+            }
+        }
+        .padding(.horizontal) 
+        .padding(.top, 15)    
+        .frame(height: 44)    
     }
 
     private func processFetchedEntries(entries: [JournalEntryCD]) {
@@ -92,12 +114,42 @@ struct YouView: View {
         
         nextMilestoneGoal = streakManager.calculateNextMilestone(currentStreak: newCurrentStreak)
 
+        let oldTotalUserWords = self.totalUserWords // Capture old value for comparison
+        var calculatedTotalWords = 0
+        for entry in entries {
+            calculatedTotalWords += entry.wordCountOfUserMessages
+        }
+        self.totalUserWords = calculatedTotalWords
+        
+        // totalEntries can be directly derived from entries.count where needed
+        // self.totalEntries = entries.count // If you still want a separate state var for it
+
         // Update calendar data for the currently displayed month
         updateCalendarDaysForDisplayedMonth(entries: entries)
+
+        // Fetch literature comparison if word count is significant and has changed or not yet fetched
+        if self.totalUserWords > 20 && (self.literatureComparisonText.isEmpty || self.totalUserWords != oldTotalUserWords) {
+            Task {
+                self.literatureComparisonText = "Comparing to great works..." // Loading state
+                do {
+                    let comparison = try await GPTService.shared.generateLiteratureComparison(wordCount: self.totalUserWords)
+                    if !comparison.isEmpty {
+                        self.literatureComparisonText = comparison
+                    } else {
+                        self.literatureComparisonText = "Your journal is growing! Keep it up."
+                    }
+                } catch {
+                    print("❌ YouView: Failed to generate literature comparison: \(error.localizedDescription)")
+                    self.literatureComparisonText = "Could not fetch literary comparison at this time."
+                }
+            }
+        } else if self.totalUserWords <= 20 {
+            self.literatureComparisonText = "Write a bit more to see how your journal compares to famous texts!"
+        }
     }
     
     private func updateCalendarDaysForDisplayedMonth(entries: [JournalEntryCD]) {
-        journalEntryDaysInMonth = calendarManager.getJournalEntryDays(for: displayedMonth, fromAllEntries: entries, using: viewContext)
+        journalEntriesMapInMonth = calendarManager.getJournalEntriesMapForMonth(for: displayedMonth, fromAllEntries: entries, using: viewContext)
     }
 
     private func changeMonth(by amount: Int) {
@@ -110,8 +162,9 @@ struct YouView: View {
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Progress")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(Color.primaryEspresso)
+                .font(.system(size: 20))
+                .foregroundColor(Color(hex: "2C1D14"))
+                .textCase(.lowercase)
                 .padding(.bottom, 5)
 
             ZStack {
@@ -167,75 +220,88 @@ struct YouView: View {
 
     // MARK: - Entries Calendar Section
     private var entriesCalendarSection: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 15) { // Outer VStack for the whole section
             Text("Entries Calendar")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(Color.primaryEspresso)
+                .font(.system(size: 20))
+                .foregroundColor(Color(hex: "2C1D14"))
+                .textCase(.lowercase)
             
-            // Calendar Header: Month Navigation
-            HStack {
-                Button { changeMonth(by: -1) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Color(hex: "1C170D"))
-                }
-                Spacer()
-                Text(monthYearString(for: displayedMonth))
-                    .font(.custom("PlusJakartaSans-Bold", size: 16)) // Figma: Plus Jakarta Sans, 700, 16px
-                    .foregroundColor(Color(hex: "1C170D")) // Figma: #1C170D
-                Spacer()
-                Button { changeMonth(by: 1) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Color(hex: "1C170D"))
-                }
-            }
-            .padding(.horizontal, 4)
-
-            // Day of Week Headers
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 10) {
-                // Use .enumerated() to provide unique IDs for day symbols
-                ForEach(Array(dayOfWeekSymbols().enumerated()), id: \.offset) { index, symbol in
-                    Text(symbol)
-                        .font(.custom("PlusJakartaSans-Bold", size: 13))
-                        .foregroundColor(Color(hex: "1C170D"))
-                        .frame(maxWidth: .infinity)
-                }
-            }
-
-            // Calendar Days Grid
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 10) {
-                // Use DayInfo.id for unique identification
-                ForEach(generateDaysInMonth(for: displayedMonth), id: \.id) { dayInfo in
-                    if let date = dayInfo.date {
-                        Button(action: {
-                            // Update HomeViewModel's state for modal
-                            homeViewModel.tappedDateForModal = date
-                            homeViewModel.entryForTappedDate = allJournalEntries.first(where: { entry in
-                                guard let entryCreatedAt = entry.createdAt else { return false }
-                                return Calendar.current.isDate(entryCreatedAt, inSameDayAs: date)
-                            })
-                            homeViewModel.showDateInteractionModal = true
-                            print("YouView: Tapped on date: \(date), Entry found: \(homeViewModel.entryForTappedDate != nil). Notifying HomeViewModel.")
-                        }) {
-                            Text("\(dayInfo.day)")
-                                .font(.custom("PlusJakartaSans-Medium", size: 14)) // Figma: Plus Jakarta Sans, 500, 14px
-                                .foregroundColor(dayCellForegroundColor(date: date, isToday: dayInfo.isToday, hasEntry: journalEntryDaysInMonth.contains(date)))
-                                .frame(width: 36, height: 36) // Approximate size from Figma (48x48 cell, text needs to fit)
-                                .background(dayCellBackground(date: date, isToday: dayInfo.isToday, hasEntry: journalEntryDaysInMonth.contains(date)))
-                                .clipShape(Circle())
-                        }
-                        .opacity(dayInfo.isWithinDisplayedMonth ? 1.0 : 0.0) // Hide days not in current month if needed, or style differently
-                    } else {
-                        Text("") // Empty cell for days outside the month, to maintain grid structure
-                            .frame(width: 36, height: 36)
+            // New Inner VStack for the white card content
+            VStack(spacing: 12) { // Adjusted spacing for items inside the card
+                // Calendar Header: Month Navigation
+                HStack {
+                    Button { changeMonth(by: -1) } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(Color(hex: "5C4433"))
+                    }
+                    Spacer()
+                    Text(monthYearString(for: displayedMonth))
+                        .font(.custom("PlusJakartaSans-Bold", size: 16))
+                        .foregroundColor(Color(hex: "5C4433"))
+                    Spacer()
+                    Button { changeMonth(by: 1) } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(Color(hex: "5C4433"))
                     }
                 }
+                .padding(.horizontal, 8) // Reduced horizontal padding slightly
+                .padding(.top, 8) // Added top padding inside the card
+
+                // Day of Week Headers
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 10) {
+                    ForEach(Array(dayOfWeekSymbols().enumerated()), id: \.offset) { index, symbol in
+                        Text(symbol)
+                            .font(.custom("PlusJakartaSans-Bold", size: 13))
+                            .foregroundColor(Color(hex: "5C4433"))
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                // Removed vertical padding here, spacing on parent VStack handles it
+
+                // Calendar Days Grid
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 10) {
+                    ForEach(generateDaysInMonth(for: displayedMonth), id: \.id) { dayInfo in
+                        if let date = dayInfo.date {
+                            Button(action: {
+                                homeViewModel.tappedDateForModal = date
+                                homeViewModel.entryForTappedDate = journalEntriesMapInMonth[date]
+                                homeViewModel.showDateInteractionModal = true
+                                print("YouView: Tapped on date: \(date), Entry found: \(homeViewModel.entryForTappedDate != nil). Notifying HomeViewModel.")
+                            }) {
+                                ZStack {
+                                    if dayInfo.isToday && journalEntriesMapInMonth[date]?.feelingEmojiAssetName == nil {
+                                        Circle().stroke(Color(hex: "5C4433"), lineWidth: 1.5)
+                                    }
+
+                                    if let entry = journalEntriesMapInMonth[date], let emojiName = entry.feelingEmojiAssetName {
+                                        Image(emojiName)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 30, height: 30)
+                                    } else {
+                                        Text("\(dayInfo.day)")
+                                            .font(.custom("PlusJakartaSans-Medium", size: 14))
+                                            .foregroundColor(dayCellForegroundColor(date: date, isToday: dayInfo.isToday, hasEntry: journalEntriesMapInMonth[date] != nil))
+                                    }
+                                }
+                                .frame(width: 36, height: 36)
+                            }
+                            .opacity(dayInfo.isWithinDisplayedMonth ? 1.0 : 0.0)
+                        } else {
+                            Rectangle()
+                                .fill(Color.clear)
+                                .frame(width: 36, height: 36)
+                        }
+                    }
+                }
+                // Removed .padding() from here as the parent VStack now has it
             }
-            .padding()
-        .background(Color.white.opacity(0.7)) // Similar to other sections, or use Figma if specified for calendar card
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            .padding() // Padding for the content inside the white card (e.g., 16 pts all around)
+            .background(Color.white.opacity(0.9)) // Made background slightly more opaque
+            .cornerRadius(16) // Increased corner radius
+            .shadow(color: Color.black.opacity(0.07), radius: 7, x: 0, y: 3) // Slightly adjusted shadow
         }
     }
 
@@ -306,161 +372,74 @@ struct YouView: View {
     }
     
     private func dayCellForegroundColor(date: Date, isToday: Bool, hasEntry: Bool) -> Color {
-        if hasEntry {
-            return Color.white // Figma: Text on green circle is white
+        if hasEntry && journalEntriesMapInMonth[date]?.feelingEmojiAssetName != nil {
+             return .clear
         }
         if isToday {
-            // If today is also an entry day, it will be white on green.
-            // If today is NOT an entry day, but needs special styling:
-            return Color(hex: "009963") // Example: Green text for today if not an entry day.
-                                      // The provided screenshot has day 5 (today) as green circle with white text.
-                                      // Other days are black text. Assuming this is for non-entry, non-today days.
+            return Color(hex: "5C4433")
         }
-        return Color(hex: "1C170D") // Default day number color from Figma
+        return Color(hex: "5C4433")
     }
 
     @ViewBuilder
     private func dayCellBackground(date: Date, isToday: Bool, hasEntry: Bool) -> some View {
-        if hasEntry {
-            Circle().fill(Color(hex: "009963")) // Figma: Green circle for entry day
-        } else if isToday {
-            // If today is *not* an entry day, but should still be visually distinct (e.g., an outline)
-             Circle().stroke(Color(hex: "009963"), lineWidth: 1.5) // Example: Green outline for today
+        if hasEntry && journalEntriesMapInMonth[date]?.feelingEmojiAssetName == nil {
+            Circle().fill(Color(hex: "5C4433"))
+        } else if isToday && journalEntriesMapInMonth[date]?.feelingEmojiAssetName == nil {
+            EmptyView()
         } else {
-            EmptyView() // No special background for other days
+            EmptyView()
         }
     }
 
     // MARK: - Stats Summary Section
     private var statsSummarySection: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Text("Stats Summary")
-                .font(.system(size: 22, weight: .bold, design: .default))
-                .foregroundColor(Color.primaryEspresso)
+            Text("your journal") // CHANGED title & styling
+                .font(.system(size: 20))
+                .foregroundColor(Color(hex: "2C1D14"))
+                .textCase(.lowercase)
             
             HStack(spacing: 15) {
-                statsCard(value: "\(weeksInJournal) weeks", label: "In Journal")
-                statsCard(value: "\(totalEntries) entries", label: "Total Entries")
+                // UPDATED statsCard calls
+                statsCard(iconName: "doc.text.fill", value: "\(totalUserWords)", label: "Words in journal")
+                statsCard(iconName: "list.bullet.rectangle.portrait.fill", value: "\(allJournalEntries.count)", label: "Total Entries")
+            }
+            
+            // Display GPT comparison text
+            if !literatureComparisonText.isEmpty {
+                Text(literatureComparisonText)
+                    .font(.system(size: 14))
+                    .italic()
+                    .foregroundColor(Color(hex: "5C4433"))
+                    .padding(.top, 10)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
             }
         }
     }
     
     @ViewBuilder
-    private func statsCard(value: String, label: String) -> some View {
-        VStack {
+    private func statsCard(iconName: String, value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) { // Align content to leading
+            Image(systemName: iconName)
+                .font(.system(size: 20)) // Icon size
+                .foregroundColor(Color(hex: "5C4433")) // Icon color
+                .padding(.bottom, 4)
+
             Text(value)
-                .font(.system(size: 18, weight: .medium, design: .rounded))
-                .foregroundColor(Color.primaryEspresso)
+                .font(.system(size: 28, weight: .semibold, design: .rounded)) // Larger, bolder value
+                .foregroundColor(Color(hex: "2C1D14")) // Darker color for value
+            
             Text(label)
                 .font(.system(size: 13, weight: .regular, design: .default))
-                .foregroundColor(Color.secondaryTaupe)
+                .foregroundColor(Color(hex: "5C4433").opacity(0.8)) // Softer color for label
         }
-        .padding(EdgeInsets(top: 15, leading: 10, bottom: 15, trailing: 10))
-        .frame(maxWidth: .infinity)
-        .background(Color.white.opacity(0.7))
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-    }
-
-    // MARK: - Quote of the Week Section
-    private var quoteOfTheWeekSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Quote of the Week")
-                .font(.system(size: 22, weight: .bold, design: .default))
-                .foregroundColor(Color.primaryEspresso)
-            
-            VStack {
-                Text("“\(quoteOfTheWeek)”")
-                    .font(.system(size: 16, design: .default).italic())
-                    .foregroundColor(Color.white)
-                    .multilineTextAlignment(.center)
-                    .padding()
-                
-                Button("Refresh Quote") {
-                    let quotes = ["Quote 1", "Quote 2", "Quote 3"]
-                    quoteOfTheWeek = quotes.randomElement() ?? "Stay positive!"
-                    print("Refresh quote tapped")
-                }
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.8))
-                .padding(.top, 5)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-            .background(
-                // Placeholder background image - replace with actual image
-                Image(systemName: "photo.fill") // Placeholder system image
-                    .resizable()
-                    .scaledToFill()
-                    .overlay(Color.black.opacity(0.4)) // Dark overlay for text legibility
-            )
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 3)
-        }
-    }
-
-    // MARK: - Mood Section
-    private var moodSection: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            Text("Mood Insights")
-                .font(.system(size: 22, weight: .bold, design: .default))
-                .foregroundColor(Color.primaryEspresso)
-
-            // Mood Distribution (Placeholder Bar Graph)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Mood Distribution")
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .foregroundColor(Color.primaryEspresso)
-                HStack(alignment: .bottom, spacing: 8) {
-                    bar(value: 0.7, color: .green, label: "Happy")
-                    bar(value: 0.4, color: .blue, label: "Sad")
-                    bar(value: 0.9, color: .orange, label: "Excited")
-                    bar(value: 0.5, color: .purple, label: "Calm")
-                    bar(value: 0.3, color: .gray, label: "Tired")
-                }
-                .frame(height: 150)
-                .padding()
-                .background(Color.white.opacity(0.7))
-                .cornerRadius(12)
-                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-            }
-
-            // Mood Flow (Placeholder Line Graph)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Mood Flow Over Time")
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .foregroundColor(Color.primaryEspresso)
-                ZStack {
-                    Image(systemName: "chart.xyaxis.line") // Placeholder
-                        .resizable()
-                        .scaledToFit()
-                        .foregroundColor(Color.secondaryTaupe.opacity(0.5))
-                    Text("Line graph placeholder")
-                        .font(.caption)
-                        .foregroundColor(Color.secondaryTaupe)
-                }
-                .frame(height: 150)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.white.opacity(0.7))
-                .cornerRadius(12)
-                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-            }
-        }
-    }
-
-    // Helper for bar graph
-    @ViewBuilder
-    private func bar(value: CGFloat, color: Color, label: String) -> some View {
-        VStack {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(color.opacity(0.7))
-                .frame(height: value * 100) // Max height for bar is 100
-            Text(label)
-                .font(.system(size: 10, design: .rounded))
-                .foregroundColor(Color.secondaryTaupe)
-        }
-        .frame(maxWidth: .infinity)
+        .padding(EdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20)) // Adjusted padding
+        .frame(maxWidth: .infinity, alignment: .leading) // Ensure content aligns leading
+        .background(Color.white) // Changed from white.opacity(0.7)
+        .cornerRadius(16) // Slightly larger corner radius
+        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3) // Adjusted shadow
     }
 }
 

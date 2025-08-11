@@ -6,6 +6,7 @@ struct HomeView: View {
         transcriptionService: WhisperTranscriptionService.shared
     )
     @State private var navigationPath = NavigationPath()
+    @State private var selectedChallengeForModal: Challenge?
 
     @State private var showConversation = false
     @State private var currentQuote: String = "Tap below to see a quote."
@@ -33,26 +34,34 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             ZStack(alignment: .bottom) { 
-            Color.backgroundCream
+            // 2. Apply conditional logic to the main background color
+            (selectedTab == .journal ? Color(hex: "#5c4433") : Color.backgroundCream)
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     if selectedTab == .entry {
-                        headerView
-                            .padding(.bottom, 15)
+                        // Header is now always visible on the Entry tab
+                        headerView // Contains dropdown and settings
+                        
+                        // Date is now a separate, centered element
+                        Text(currentDate)
+                            .font(.system(size: 17, weight: .medium, design: .default))
+                            .foregroundColor(Color.neutralGray)
+                            .padding(.top, 4) // Adjust spacing as needed
+                        
                         quoteSection
                             .padding(.horizontal)
+                            .padding(.top, 10) // Adjust spacing from date
                             .padding(.bottom, 20)
                     }
                     
                     mainContentView
                         .id(selectedTab)
-                        .padding(.horizontal, 15)
                         .frame(maxWidth: .infinity, maxHeight: .infinity) 
                     
                     Spacer(minLength: 0) 
                 }
-                .padding(.bottom, estimatedTabBarVisualHeight) 
+                .padding(.bottom, 60) // 1. Re-introduce global bottom padding for content
 
                 VStack(spacing: 0) {
                 Spacer()
@@ -128,10 +137,14 @@ struct HomeView: View {
                     // Animation for the modal ZStack itself is now handled by the .animation on NavigationStack below.
                 }
                 // END OF NEW MODAL PRESENTATION LAYER
+
+                if let challenge = selectedChallengeForModal {
+                    challengeDetailModal(for: challenge)
+                }
             }
             .navigationTitle(navigationTitleForSelectedTab())
             .navigationBarTitleDisplayMode(selectedTab == .entry ? .automatic : .inline) 
-            .toolbar(selectedTab == .entry ? .hidden : .visible, for: .navigationBar) 
+            .toolbar(selectedTab == .entry || selectedTab == .you || selectedTab == .journal || selectedTab == .challenges ? .hidden : .visible, for: .navigationBar)
             // Animation for modal presentation tied to HomeViewModel state
             .animation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0), value: viewModel.showDateInteractionModal)
             .navigationDestination(for: JournalEntryCD.self) { entryToView in
@@ -144,7 +157,8 @@ struct HomeView: View {
                 showRandomQuote()
             }
             viewModel.newlySavedEntry = nil
-            }
+            viewModel.fetchActiveChallenges()
+        }
         .onChange(of: viewModel.newlySavedEntry) { _, newEntry in
              showConversation = (newEntry != nil)
         }
@@ -166,33 +180,44 @@ struct HomeView: View {
     // MARK: - UI Components
     private var headerView: some View {
         HStack {
-            // Logo on the left
-            Image("AppIcon") // Changed to AppIcon
-                .resizable()
-                .scaledToFit()
-                .frame(width: 28, height: 28) // Slightly increased frame for AppIcon
-                // .cornerRadius(4) // Optionally add corner radius if it looks too square
-                // .foregroundColor(Color.buttonBrown) // Uncomment if the AppIcon needs tinting
-
+            // New Dropdown Menu for Journal Mode Selection
+            Menu {
+                ForEach(viewModel.availableModes, id: \.self) { mode in
+                    Button(action: {
+                        withAnimation(.spring()) {
+                            viewModel.selectedMode = mode
+                        }
+                    }) {
+                        Label(headerTitle(for: mode), systemImage: iconName(for: mode))
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: iconName(for: viewModel.selectedMode))
+                    Text(headerTitle(for: viewModel.selectedMode))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(viewModel.selectedMode.themeColor)
+            }
+            
             Spacer()
 
-            // Date in the center
-            Text(currentDate)
-                .font(.system(size: 17, weight: .medium, design: .default)) 
-                .foregroundColor(Color.neutralGray) 
+            // Date is no longer here
             
             Spacer()
 
             // Settings icon on the right
             NavigationLink(destination: SettingsView()) {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 22, weight: .medium)) // Size of the icon
-                    .foregroundColor(Color.buttonBrown) // Use brand color for interactive elements
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundColor(Color.buttonBrown)
             }
         }
-        .padding(.horizontal) // Add horizontal padding to the HStack
-        .padding(.top, 15)    // Retain top padding for notch clearance
-        .frame(height: 44)    // Give the header a consistent height
+        .padding(.horizontal)
+        .padding(.top, 15)    
+        .frame(height: 44)    
     }
     
     private var quoteSection: some View {
@@ -200,30 +225,33 @@ struct HomeView: View {
             ZStack {
                 let cloudWidth: CGFloat = 300
                 let cloudHeight: CGFloat = 106
-                createEllipse(cx: 90.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 90.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight) 
-                createEllipse(cx: 81.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 163.5, cy: 65, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 100.5, cy: 60, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 129.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 183.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 231.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 231.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight) 
-                createEllipse(cx: 146.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 202.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 250, cy: 23, rx: 29, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 45, cy: 23, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 27, cy: 60, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 55, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 81, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 125, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 166, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 195, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 227, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 250, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 266, cy: 53, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 28, cy: 42, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
-                createEllipse(cx: 273, cy: 37, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight)
+                // Pass the dynamic theme color to the ellipses
+                let themeColor = viewModel.selectedMode.themeColor
+                
+                createEllipse(cx: 90.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 90.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 81.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 163.5, cy: 65, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 100.5, cy: 60, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 129.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 183.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 231.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 231.5, cy: 53, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 146.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 202.5, cy: 23, rx: 36.5, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 250, cy: 23, rx: 29, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 45, cy: 23, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 27, cy: 60, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 55, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 81, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 125, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 166, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 195, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 227, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 250, cy: 83, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 266, cy: 53, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 28, cy: 42, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
+                createEllipse(cx: 273, cy: 37, rx: 27, ry: 23, cloudWidth: cloudWidth, cloudHeight: cloudHeight, color: themeColor)
 
                 Text("“\(currentQuote)”")
                     .font(.system(size: 18, design: .default).italic()) 
@@ -251,93 +279,23 @@ struct HomeView: View {
         }
     }
 
-    private var mainJournalingArea: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Text("How is your day?")
-                .font(.system(size: 28, weight: .bold, design: .default))
-                .foregroundColor(Color.primaryEspresso)
-                .multilineTextAlignment(.center)
-                .padding(.bottom, 32)
-            Spacer(minLength: 0)
-
-            Text(viewModel.isRecording ? "Recording... Tap to stop" : "Tap the mic to start journaling")
-                .font(.system(size: 16, weight: .regular, design: .default))
-                .foregroundColor(Color.secondaryTaupe)
-                .multilineTextAlignment(.center)
-                .padding(.bottom, 15)
-
-            HStack(alignment: .center, spacing: 32) {
-                Button {
-                    print("Type button tapped")
-                } label: {
-                    VStack {
-                        Image(systemName: "pencil.and.outline")
-                            .font(.system(size: 28, design: .default))
-                        Text("Type")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                    }
-                    .foregroundColor(Color.buttonBrown)
-                }
-                .frame(width: 60)
-
-                Button {
-                    viewModel.toggleRecording()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.buttonBrown)
-                            .frame(width: 80, height: 80)
-                        Image(systemName: viewModel.isRecording ? "stop.fill" : "mic.fill")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 36, height: 36)
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button {
-                    print("Prompts button tapped")
-                } label: {
-                    VStack {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 28, design: .default))
-                        Text("Prompts")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                    }
-                    .foregroundColor(Color.buttonBrown)
-                }
-                .frame(width: 60)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
-        }
-        .frame(maxWidth: .infinity)
-        // Increase maxHeight for the journaling card
-        .frame(minHeight: UIScreen.main.bounds.height * 0.45, maxHeight: UIScreen.main.bounds.height * 0.62) 
-        .background(
-            RoundedRectangle(cornerRadius: 30)
-                .fill(Color.white.opacity(0.7))
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-        )
-        .padding(.horizontal, 8)
-    }
-
     @ViewBuilder
     private var mainContentView: some View {
         VStack {
             switch selectedTab {
             case .entry:
-                entryScreenContent.padding(.horizontal) 
+                entryScreenContent
+                    .padding(.horizontal)
             case .journal:
                 HistoryView()
             case .insights:
                 InsightsView()
+                    .padding(.horizontal)
             case .challenges:
-                ChallengesView()
+                ChallengesView(homeViewModel: viewModel, mainSelectedTab: $selectedTab, selectedChallengeForModal: $selectedChallengeForModal)
             case .you:
                 YouView(homeViewModel: viewModel)
+                    .padding(.horizontal)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity) 
@@ -345,46 +303,59 @@ struct HomeView: View {
     
     @ViewBuilder
     private var entryScreenContent: some View {
-        VStack(spacing: 10) { 
-            mainJournalingArea 
-            if let errorMessage = viewModel.errorMessage {
-                Text("Error: \(errorMessage)")
-                    .font(.system(size: 14, weight: .regular, design: .default)) 
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                    .padding(.top, 5) 
-            } else if viewModel.isLoading {
-                ProgressView()
-                     .tint(Color.secondaryTaupe)
-                     .padding(.top, 5)
-            } 
+        // The swipeable TabView
+        TabView(selection: $viewModel.selectedMode) {
+            ForEach(viewModel.availableModes, id: \.self) { mode in
+                // The JournalingPageView no longer needs extra parameters
+                JournalingPageView(
+                    viewModel: viewModel,
+                    mode: mode
+                )
+                .tag(mode)
+            }
         }
-        .frame(maxHeight: .infinity, alignment: .top) 
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(maxHeight: .infinity, alignment: .top)
+        .onChange(of: viewModel.requestedMode) { _, newRequestedMode in
+            // When a deep link request comes in, update the selected mode
+            if let newMode = newRequestedMode {
+                viewModel.selectedMode = newMode
+                // Reset the request so it can be triggered again
+                viewModel.requestedMode = nil
+            }
+        }
     }
 
     private var bottomTabBar: some View {
-        HStack {
-            tabBarItem(iconName: "text.book.closed.fill", label: "Journal", tab: .journal)
+        // 1. Determine colors based on the selected tab
+        let isJournalTabActive = (selectedTab == .journal)
+        
+        let activeColor = isJournalTabActive ? Color(hex: "#fdf9f3") : Color.buttonBrown
+        let inactiveColor = isJournalTabActive ? Color(hex: "#fdf9f3").opacity(0.7) : Color.secondaryTaupe
+        let barBackgroundColor = isJournalTabActive ? Color(hex: "#5c4433") : Color.backgroundCream
+
+        return HStack {
+            // 3. Pass the determined colors to each tab bar item
+            tabBarItem(iconName: "text.book.closed.fill", label: "Journal", tab: .journal, activeColor: activeColor, inactiveColor: inactiveColor)
             Spacer()
-            tabBarItem(iconName: "chart.pie.fill", label: "Insights", tab: .insights)
+            tabBarItem(iconName: "chart.pie.fill", label: "Insights", tab: .insights, activeColor: activeColor, inactiveColor: inactiveColor)
             Spacer()
-            tabBarItem(iconName: "mic.fill", label: "Entry", tab: .entry) 
+            tabBarItem(iconName: "mic.fill", label: "Entry", tab: .entry, activeColor: activeColor, inactiveColor: inactiveColor)
             Spacer()
-            tabBarItem(iconName: "flame.fill", label: "Challenges", tab: .challenges)
+            tabBarItem(iconName: "flame.fill", label: "Challenges", tab: .challenges, activeColor: activeColor, inactiveColor: inactiveColor)
             Spacer()
-            tabBarItem(iconName: "person.fill", label: "You", tab: .you)
+            tabBarItem(iconName: "person.fill", label: "You", tab: .you, activeColor: activeColor, inactiveColor: inactiveColor)
         }
         .padding(.horizontal, 25)
-        .padding(.top, 6) 
-        // This padding ensures tab bar content is above home indicator / bottom edge
-        .padding(.bottom, (UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.safeAreaInsets.bottom ?? 0) + 5) // Added small 5pt base
-        .background(.clear) 
+        .padding(.vertical, 5) // 2. Add aesthetic vertical padding inside the tab bar
+        .padding(.bottom, (UIApplication.shared.windows.first { $0.isKeyWindow }?.safeAreaInsets.bottom ?? 0) + 5)
         .frame(maxWidth: .infinity)
+        .background(barBackgroundColor)
     }
 
+    // 2. Modify the tabBarItem function to accept colors as parameters
     @ViewBuilder
-    private func tabBarItem(iconName: String, label: String, tab: Tab) -> some View {
+    private func tabBarItem(iconName: String, label: String, tab: Tab, activeColor: Color, inactiveColor: Color) -> some View {
         Button(action: {
             selectedTab = tab
             if tab == .entry { 
@@ -394,10 +365,10 @@ struct HomeView: View {
             VStack(spacing: 2) { 
                 Image(systemName: iconName)
                     .font(selectedTab == tab ? .system(size: 22, weight: .bold, design: .rounded) : .system(size: 20, weight: .regular, design: .rounded))
-                    .foregroundColor(selectedTab == tab ? Color.buttonBrown : Color.secondaryTaupe)
+                    .foregroundColor(selectedTab == tab ? activeColor : inactiveColor)
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundColor(selectedTab == tab ? Color.buttonBrown : Color.secondaryTaupe)
+                    .foregroundColor(selectedTab == tab ? activeColor : inactiveColor)
             }
         }
         .frame(maxWidth: .infinity)
@@ -414,9 +385,9 @@ struct HomeView: View {
     }
     
     @ViewBuilder
-    private func createEllipse(cx: CGFloat, cy: CGFloat, rx: CGFloat, ry: CGFloat, cloudWidth: CGFloat, cloudHeight: CGFloat) -> some View {
+    private func createEllipse(cx: CGFloat, cy: CGFloat, rx: CGFloat, ry: CGFloat, cloudWidth: CGFloat, cloudHeight: CGFloat, color: Color) -> some View {
         Ellipse()
-            .fill(Color.buttonBrown) 
+            .fill(color) // Use the passed-in color
             .frame(width: rx * 2, height: ry * 2)
             .offset(x: cx - (cloudWidth / 2), y: cy - (cloudHeight / 2))
     }
@@ -428,13 +399,149 @@ struct HomeView: View {
         case .insights:
             return "Insights"
         case .entry:
-            return "" 
+            // When entry tab is selected, show the specific mode's title
+            switch viewModel.selectedMode {
+            case .standard:
+                return "Journal"
+            case .challenge(let attempt, _):
+                return viewModel.getChallenge(from: attempt)?.title ?? "Challenge"
+            }
         case .challenges:
             return "Challenges"
         case .you:
             return "You"
+        }
+    }
+
+    // MARK: - Helper functions moved from JournalModeSelectorView
+    private func iconName(for mode: JournalEntryMode) -> String {
+        switch mode {
+        case .standard:
+            return "book.fill"
+        case .challenge:
+            switch mode.challenge?.title {
+            case "Gratitude 7-day Challenge": return "sun.max.fill"
+            case "Love Challenge": return "heart.fill"
+            case "Journaling Beginner Challenge": return "pencil.and.outline"
+            default: return "star.fill"
+            }
+        }
+    }
+
+    private func headerTitle(for mode: JournalEntryMode) -> String {
+        switch mode {
+        case .standard:
+            return "My Journal"
+        case .challenge:
+            switch mode.challenge?.title {
+            case "Gratitude 7-day Challenge": return "Gratitude"
+            case "Love Challenge": return "Love"
+            case "Journaling Beginner Challenge": return "Beginner"
+            default: return "Challenge"
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func challengeDetailModal(for challenge: Challenge) -> some View {
+        ZStack {
+            LightBlurView(style: .systemUltraThinMaterialLight)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation {
+                        selectedChallengeForModal = nil
+                    }
+                }
+
+            VStack {
+                Spacer()
+                ChallengeDetailView(
+                    challenge: challenge,
+                    viewModel: viewModel,
+                    mainSelectedTab: $selectedTab,
+                    dismissAction: {
+                        withAnimation {
+                            selectedChallengeForModal = nil
+                        }
+                    }
+                )
+                .padding(20)
+                .frame(maxWidth: .infinity)
+                .background(challenge.gradient)
+                .cornerRadius(20)
+                .shadow(color: Color.black.opacity(0.1), radius: 20)
+                .padding(.horizontal, 20)
+                Spacer()
+            }
+        }
+        .transition(.opacity.animation(.easeInOut))
     }
 }
+
+// MARK: - Standalone Helper Views and Extensions
+
+struct ChallengeDaySelectorView: View {
+    let duration: Int
+    let completedDays: Set<Int>
+    let selectedDayIndex: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<duration, id: \.self) { index in
+                DayView(
+                    dayNumber: index + 1,
+                    isSelected: index == selectedDayIndex,
+                    isCompleted: completedDays.contains(index + 1)
+                )
+                
+                if index < duration - 1 {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.3))
+                        .frame(width: 15, height: 2)
+                }
+            }
+        }
+    }
+
+    private struct DayView: View {
+        let dayNumber: Int
+        let isSelected: Bool
+        let isCompleted: Bool
+
+        var body: some View {
+            ZStack {
+                Circle()
+                    .stroke(Color.gray.opacity(0.5), lineWidth: isSelected ? 2 : 1)
+                    .background(isCompleted ? Circle().fill(Color.green.opacity(0.3)) : Circle().fill(Color.clear))
+                    .frame(width: 30, height: 30)
+                
+                if isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.green)
+                } else {
+                    Text("\(dayNumber)")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isSelected ? .primary : .secondary)
+                }
+            }
+        }
+    }
+}
+
+// Add a safe subscript to Array to prevent crashes
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
+
+// Add a computed property to ChallengeAttempt for easier day checking
+extension ChallengeAttempt {
+    var completedDaysSet: Set<Int> {
+        guard let daysString = completedDays, !daysString.isEmpty else { return [] }
+        return Set(daysString.split(separator: ",").compactMap { Int($0) })
+    }
 }
 
 #Preview {

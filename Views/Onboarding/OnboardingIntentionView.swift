@@ -1,16 +1,14 @@
 import SwiftUI
 
 struct OnboardingIntentionView: View {
-    // Action to proceed to the next onboarding step (Tone selection)
-    var onIntentionSelected: (String) -> Void // Pass the selected intention
-    // Action to skip onboarding
-    var onSkip: () -> Void
+    @EnvironmentObject var userJourney: UserJourneyManager
+    private let persistenceManager = OnboardingPersistenceManager()
 
-    let intentions = [
-        "Understand my feelings",
-        "Process a situation",
-        "Check in with myself",
-        "Just need to vent"
+    let goals = [
+        "I want to reflect on my day 🪞",
+        "I’m working on personal growth 🌱",
+        "I’m processing thoughts & feelings 💭",
+        "Other 👀"
     ]
 
     var body: some View {
@@ -20,17 +18,17 @@ struct OnboardingIntentionView: View {
             VStack(alignment: .center, spacing: 25) {
                 Spacer()
 
-                Text("What brings you here today?")
-                    .font(.system(size: 34, weight: .regular, design: .default)) // SF Pro
+                Text("So, what brings you to Heard?")
+                    .font(.system(size: 34, weight: .regular, design: .default))
                     .foregroundColor(.primaryEspresso)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
                     .padding(.bottom, 15)
 
-                ForEach(intentions, id: \.self) { intention in
-                    Button(action: { onIntentionSelected(intention) }) {
-                        Text(intention)
-                            .font(.system(size: 18, weight: .medium, design: .rounded)) // SF Pro Rounded
+                ForEach(goals, id: \.self) { goal in
+                    Button(action: { selectGoal(goal) }) {
+                        Text(goal)
+                            .font(.system(size: 18, weight: .medium, design: .rounded))
                             .foregroundColor(.backgroundCream)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
@@ -42,23 +40,21 @@ struct OnboardingIntentionView: View {
                 .padding(.horizontal, 40)
 
                 Spacer()
-                Spacer() // Extra spacer to push content up slightly
-
-                Button(action: onSkip) {
-                    Text("Skip for now")
-                        .font(.system(size: 16, weight: .regular, design: .rounded)) // SF Pro Rounded
-                        .foregroundColor(.secondaryTaupe) // Use secondary text color
-                        .underline()
-                }
-                .padding(.bottom, 40)
+                Spacer()
             }
         }
+    }
+
+    private func selectGoal(_ goal: String) {
+        print("Selected Goal: \(goal)")
+        var onboardingData = persistenceManager.getOnboardingData()
+        onboardingData.selectedGoal = goal
+        persistenceManager.saveOnboardingData(onboardingData)
+        userJourney.advance(to: .onboardingTone)
     }
 }
 
 #Preview {
-    OnboardingIntentionView(
-        onIntentionSelected: { intention in print("Selected: \(intention)") },
-        onSkip: { print("Skipped") }
-    )
+    OnboardingIntentionView()
+        .environmentObject(UserJourneyManager.shared)
 } 

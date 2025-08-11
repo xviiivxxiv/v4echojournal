@@ -4,6 +4,32 @@ import SwiftUI
 import CoreData
 import OSLog
 
+// ADDED: Define the different modes for the journaling entry screen
+enum JournalEntryMode: Hashable {
+    case standard
+    case challenge(attempt: ChallengeAttempt, dayIndex: Int)
+
+    // Helper to get the associated Challenge object
+    var challenge: Challenge? {
+        guard case .challenge(let attempt, _) = self,
+              let challengeID = attempt.challengeID,
+              let challenge = ChallengeData.samples.first(where: { $0.id.uuidString == challengeID }) else {
+            return nil
+        }
+        return challenge
+    }
+    
+    // ADDED: Centralized theme color for each mode
+    var themeColor: Color {
+        switch self {
+        case .standard:
+            return Color.buttonBrown // Default brown for standard journal
+        case .challenge:
+            return challenge?.themeColor ?? .gray // Challenge's theme color, or gray as a fallback
+        }
+    }
+}
+
 @MainActor
 class HomeViewModel: ObservableObject {
 
@@ -24,6 +50,12 @@ class HomeViewModel: ObservableObject {
     @Published var tappedDateForModal: Date? = nil
     @Published var entryForTappedDate: JournalEntryCD? = nil
 
+    // ADDED: Properties for Challenge Mode
+    @Published var activeChallenges: [ChallengeAttempt] = []
+    @Published var availableModes: [JournalEntryMode] = [.standard]
+    @Published var selectedMode: JournalEntryMode = .standard
+    @Published var requestedMode: JournalEntryMode? = nil
+
     // MARK: - Services
     private let audioRecorder: AudioRecordingService
     private let transcriptionService: TranscriptionServiceProtocol
@@ -33,6 +65,7 @@ class HomeViewModel: ObservableObject {
 
     private var recordingData: Data? = nil
     private var cancellables = Set<AnyCancellable>()
+    private let viewContext = PersistenceController.shared.container.viewContext
 
     // MARK: - Initialization
     init(
@@ -60,6 +93,40 @@ class HomeViewModel: ObservableObject {
                  self?.statusMessage = "Error during recording."
              }
              .store(in: &cancellables)
+
+        // ADDED: Fetch challenges on init
+        fetchActiveChallenges()
+    }
+
+    // MARK: - Challenge Logic (Moved from ChallengesViewModel)
+
+    func startChallenge(challenge: Challenge) {
+        // Prevent starting a challenge that's already active
+        guard !activeChallenges.contains(where: { $0.challengeID == challenge.id.uuidString }) else {
+            print("Challenge already started.")
+            return
+        }
+
+        let newAttempt = ChallengeAttempt(context: viewContext)
+        newAttempt.id = UUID()
+        newAttempt.challengeID = challenge.id.uuidString
+        newAttempt.startDate = Date()
+        newAttempt.completedDays = ""
+
+        do {
+            try viewContext.save()
+            print("✅ Challenge started successfully!")
+            // Refresh the lists to update the UI
+            fetchActiveChallenges()
+
+            // After starting, set this as the requested mode for immediate navigation
+            let dayIndex = 0 // Always start at day 0
+            self.requestedMode = .challenge(attempt: newAttempt, dayIndex: dayIndex)
+
+        } catch {
+            print("❌ Error saving new challenge attempt: \(error.localizedDescription)")
+            // Optionally, handle the error (e.g., show an alert to the user)
+        }
     }
 
     // MARK: - Public Methods
@@ -172,9 +239,36 @@ class HomeViewModel: ObservableObject {
                     logger.debug("Initial user message saved for entry ID: \(entryId)")
                 } catch {
                     logger.error("Failed to save initial user message for entry ID: \(entryId). Error: \(error.localizedDescription)")
-                    // Optionally, set an error message for the UI if this failure is critical
-                    // self.errorMessage = "Failed to save initial message details."
                 }
+                
+                // ADDED: Logic to handle saving a challenge entry
+                switch selectedMode {
+                case .standard:
+                    // No extra logic needed for a standard entry
+                    break
+                case .challenge(let attempt, let dayIndex):
+                    // Link the journal entry to the challenge attempt
+                    savedEntry.challengeAttempt = attempt
+                    
+                    // Update the completed days on the attempt
+                    let dayNumber = dayIndex + 1
+                    var completed = attempt.completedDaysSet
+                    completed.insert(dayNumber)
+                    
+                    // Convert back to a sorted string for consistent storage
+                    attempt.completedDays = completed.sorted().map(String.init).joined(separator: ",")
+                    
+                    // Save the context again to persist the relationship and updated progress
+                    do {
+                        try viewContext.save()
+                        logger.debug("✅ Successfully linked entry to challenge and updated progress.")
+                        // Refresh the UI to show new progress
+                        fetchActiveChallenges()
+                    } catch {
+                        logger.error("❌ Failed to save challenge progress: \(error.localizedDescription)")
+                    }
+                }
+                
             } else {
                 print("❌ Failed to fetch saved entry with ID: \(entryId)")
                 errorMessage = "Failed to fetch saved entry after saving."
@@ -191,5 +285,43 @@ class HomeViewModel: ObservableObject {
                  print("Cleaned up audio file after Core Data save failure.")
              }
         }
+    }
+
+    // ADDED: Function to fetch active challenges and set up available modes
+    func fetchActiveChallenges() {
+        let request: NSFetchRequest<ChallengeAttempt> = ChallengeAttempt.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \ChallengeAttempt.startDate, ascending: true)]
+        
+        do {
+            let attempts = try viewContext.fetch(request)
+            self.activeChallenges = attempts
+            
+            // Rebuild the available modes list
+            var modes: [JournalEntryMode] = [.standard]
+            for attempt in attempts {
+                // Ensure the challenge data for this attempt actually exists before creating a mode for it.
+                // This prevents the "Could not load details" bug.
+                if let challenge = getChallenge(from: attempt) {
+                    let completedCount = attempt.completedDays?.split(separator: ",").count ?? 0
+                    let dayIndex = min(completedCount, challenge.durationInDays - 1)
+                    modes.append(.challenge(attempt: attempt, dayIndex: dayIndex))
+                }
+            }
+            self.availableModes = modes
+
+            // If the previously selected mode is no longer available, default to standard
+            if !self.availableModes.contains(self.selectedMode) {
+                self.selectedMode = .standard
+            }
+
+        } catch {
+            print("❌ Error fetching active challenges: \(error.localizedDescription)")
+        }
+    }
+    
+    // ADDED: Helper to get Challenge data from an attempt
+    func getChallenge(from attempt: ChallengeAttempt) -> Challenge? {
+        guard let challengeID = attempt.challengeID else { return nil }
+        return ChallengeData.samples.first { $0.id.uuidString == challengeID }
     }
 }

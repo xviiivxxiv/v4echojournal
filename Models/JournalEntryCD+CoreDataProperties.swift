@@ -2,7 +2,7 @@
 //  JournalEntryCD+CoreDataProperties.swift
 //  v4 EchoJournal
 //
-//  Created by Papi on 03/06/2025.
+//  Created by Papi on 19/06/2025.
 //
 //
 
@@ -30,6 +30,7 @@ extension JournalEntryCD {
     @NSManaged public var messages: NSOrderedSet?
     @NSManaged public var photos: NSOrderedSet?
     @NSManaged public var identifiedFeelings: NSOrderedSet?
+    @NSManaged public var challengeAttempt: ChallengeAttempt?
 
 }
 
