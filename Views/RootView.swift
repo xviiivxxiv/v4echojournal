@@ -4,13 +4,17 @@ import FirebaseAuth
 import AuthenticationServices
 import AppTrackingTransparency
 import AdSupport
+import SuperwallKit
 
 struct RootView: View {
     @StateObject private var authService = AuthService()
     @StateObject private var settings = SettingsManager.shared
     @StateObject private var userJourney = UserJourneyManager.shared
+    // Use @State for the optional ViewModel. It will be created manually.
+    @State private var homeViewModel: HomeViewModel? = nil
     
     @State private var isInitialized = false
+    @State private var isHomeReady = false
     
     var body: some View {
         Group {
@@ -23,6 +27,10 @@ struct RootView: View {
         .environmentObject(authService)
         .environmentObject(settings)
         .environmentObject(userJourney)
+        // Conditionally apply the environment object only when it's non-nil.
+        .if(homeViewModel != nil) { view in
+            view.environmentObject(homeViewModel!)
+        }
         .onAppear {
             requestTrackingPermission()
             initializeApp()
@@ -70,16 +78,34 @@ struct RootView: View {
             
         // 2. Paywall and Account Creation
         case .paywallPresented:
-            // Superwall will present its own UI over this, so we just need a placeholder.
-            loadingView("Loading offers...")
-                .onAppear { print("📱 Showing: Placeholder for Superwall") }
+            // Show the same loading view as the next state for seamless transition
+            loadingView("Setting up your account...")
+                .onAppear { 
+                    print("📱 Showing: Placeholder for Superwall")
+                    
+                    // Set up Superwall delegate to handle dismissal
+                    Superwall.shared.delegate = SuperwallDelegateHandler { 
+                        // Purchase complete handler
+                        DispatchQueue.main.async {
+                            print("🎉 Paywall purchase completed - advancing journey")
+                            userJourney.advance(to: .subscriptionActive)
+                        }
+                    } onDismiss: {
+                        // Paywall dismissed without purchase
+                        DispatchQueue.main.async {
+                            print("❌ Paywall dismissed - continuing to account setup")
+                            // Skip subscription and go directly to account setup
+                            userJourney.advance(to: .fullyOnboarded)
+                        }
+                    }
+                }
             
         case .subscriptionActive:
-            // Show brief transition or go directly to account creation
+            // Show brief transition before advancing to the final onboarding step.
             loadingView("Setting up your account...")
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        userJourney.advance(to: .accountCreationInProgress)
+                        userJourney.advance(to: .fullyOnboarded)
                     }
                 }
             
@@ -88,23 +114,29 @@ struct RootView: View {
                 .onAppear { print("📱 Showing: AccountCreationView") }
             
         case .accountCreated:
-            // Show brief transition or go directly to personalization
-            loadingView("Personalizing your experience...")
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        userJourney.advance(to: .personalizationInProgress)
-                    }
-                }
-            
-        case .personalizationInProgress:
-            PersonalizationView()
-                .onAppear { print("📱 Showing: PersonalizationView") }
+            // This is a transitional state. The UserJourneyManager handles the next step.
+            loadingView("Finalizing account...")
             
         case .fullyOnboarded:
-            // Show brief transition or go directly to main app
-            loadingView("Welcome to EchoJournal!")
+            // This view now initializes the HomeViewModel and waits for it to be ready.
+            loadingView("Setting up your account...")
                 .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    if homeViewModel == nil && !isHomeReady {
+                        // Create the view model only when we enter this state.
+                        homeViewModel = HomeViewModel(transcriptionService: WhisperTranscriptionService.shared)
+                        
+                        // Wait a moment for the view to settle, then fetch
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            homeViewModel?.fetchActiveChallenges()
+                            // Set ready after a brief delay to ensure everything is loaded
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                isHomeReady = true
+                            }
+                        }
+                    }
+                }
+                .onChange(of: isHomeReady) { _, ready in
+                    if ready {
                         userJourney.advance(to: .mainApp)
                     }
                 }
@@ -115,8 +147,16 @@ struct RootView: View {
                 .onAppear { print("📱 Showing: ReturningUserAuthView") }
             
         case .mainApp:
-            MainTabView()
-                .onAppear { print("📱 Showing: MainTabView") }
+            // The MainTabView will now pull the homeViewModel from the environment.
+            // A non-nil check is performed here to ensure it exists before showing the view.
+            if homeViewModel != nil {
+                MainTabView()
+                    .onAppear { print("📱 Showing: MainTabView") }
+            } else {
+                // This fallback provides a safe view if the ViewModel isn't ready,
+                // preventing a crash.
+                loadingView("Loading...")
+            }
         }
     }
     
@@ -193,8 +233,8 @@ struct RootView: View {
             // Handle session restoration based on current state
             switch userJourney.currentState {
             case .accountCreationInProgress:
-                // Account creation succeeded
-                userJourney.advance(to: .accountCreated)
+                // Account creation succeeded, let the manager handle the next step
+                userJourney.handleAccountCreated()
                 
             case .returningUserAuth:
                 // Returning user authenticated via Firebase - still need local auth
@@ -214,6 +254,118 @@ struct RootView: View {
     }
 }
 
+// Helper ViewModifier to apply modifiers conditionally
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
+// MARK: - Account Creation View
+struct AccountCreationView: View {
+    @State private var showEmailSignUp = false
+
+    var body: some View {
+        ZStack {
+            // Background Image
+            Image("Heard Onboarding - Background Image")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+
+            // Bottom gradient for darker button area
+            VStack {
+                Spacer()
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color.black.opacity(0),
+                        Color.black.opacity(0.3),
+                        Color.black.opacity(0.5)
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: UIScreen.main.bounds.height * 0.5)
+                .ignoresSafeArea()
+            }
+            
+            VStack {
+                Spacer()
+                
+                // Header with refined spacing
+                VStack(spacing: 20) {
+                    Image("Heard Logo - transparent")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 160)
+
+                    VStack(spacing: 8) {
+                        Text("Create Your Account")
+                            .font(.custom("GentyDemo-Regular", size: 42))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .foregroundColor(.white)
+                        
+                        Text("Join thousands of others on their reflection journey.")
+                            .font(.custom("VeryVogueDisplay", size: 22))
+                            .foregroundColor(.white.opacity(0.9))
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal, 30)
+                .padding(.bottom, 40)
+                
+                Spacer()
+                
+                // Social Login Buttons with Facetune styling
+                VStack(spacing: 12) {
+                    SocialSignInButton(provider: .apple)
+                    SocialSignInButton(provider: .google)
+                    SocialSignInButton(provider: .facebook)
+                    
+                    // Email button with matching style
+                    Button(action: {
+                        showEmailSignUp = true
+                    }) {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .font(.system(size: 18))
+                                .frame(width: 24)
+                            
+                            Text("Continue with Email")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 20)
+                        .frame(height: 50)
+                        .background(Color.white)
+                        .cornerRadius(50)  // Fully rounded pill shape
+                        .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 3)
+                    }
+                }
+                .padding(.horizontal, 30)
+                .padding(.bottom, 20)
+                
+                // Terms and Conditions Footer
+                Text("By continuing, you agree to our [Terms of Use](https://www.example.com/terms) and [Privacy Policy](https://www.example.com/privacy).")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 30)
+            }
+        }
+        .sheet(isPresented: $showEmailSignUp) {
+            EmailSignUpView()
+        }
+    }
+}
 // MARK: - Social Provider Enum and Button
 enum SocialProvider {
     case apple, google, facebook
@@ -235,86 +387,114 @@ enum SocialProvider {
     }
     
     var backgroundColor: Color {
-        switch self {
-        case .apple: return .white
-        case .google: return .white
-        case .facebook: return Color(red: 24/255, green: 119/255, blue: 242/255)
-        }
+        return .white
     }
     
     var foregroundColor: Color {
-        switch self {
-        case .apple, .google: return .black
-        case .facebook: return .white
-        }
+        return .black
     }
 }
 
 struct SocialSignInButton: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var userJourney: UserJourneyManager
+    @State private var isLoading = false
+    @State private var errorMessage: String?
     
     var provider: SocialProvider
     
     var body: some View {
         if provider == .apple {
-            SignInWithAppleButton(
-                onRequest: { request in
-                    authService.handleSignInWithAppleRequest(request)
-                },
-                onCompletion: { result in
-                    Task {
-                        await handleAppleSignIn(result)
+            // Use native SignInWithAppleButton with custom overlay for consistent styling
+            ZStack {
+                // Background matching other buttons
+                RoundedRectangle(cornerRadius: 50)  // Fully rounded pill shape
+                    .fill(Color.white)
+                    .frame(height: 50)
+                    .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 3)
+                
+                SignInWithAppleButton(
+                    onRequest: { request in
+                        authService.handleSignInWithAppleRequest(request)
+                    },
+                    onCompletion: { result in
+                        Task {
+                            await handleAppleSignIn(result)
+                        }
                     }
-                }
-            )
-            .signInWithAppleButtonStyle(.white)
+                )
+                .signInWithAppleButtonStyle(.white)
+                .frame(height: 44) // Slightly smaller to fit inside
+                .clipShape(RoundedRectangle(cornerRadius: 50))  // Match pill shape
+                .padding(.horizontal, 3) // Small padding from edges
+            }
             .frame(height: 50)
-            .cornerRadius(12)
         } else {
             Button(action: {
-                handleSocialSignIn()
+                handleSocialSignIn(provider: provider)
             }) {
                 HStack {
-                    Image(systemName: provider.iconName)
-                        .font(.title2)
+                    // Custom icon styling
+                    Group {
+                        if provider == .google {
+                            // Google "G" icon
+                            Text("G")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(Color(red: 66/255, green: 133/255, blue: 244/255))
+                        } else if provider == .facebook {
+                            // Facebook "f" icon
+                            Text("f")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(Color(red: 24/255, green: 119/255, blue: 242/255))
+                        }
+                    }
+                    .frame(width: 24)
+                    
                     Text(provider.title)
-                        .fontWeight(.medium)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.black)
                 }
                 .frame(maxWidth: .infinity)
-                .padding()
-                .background(provider.backgroundColor)
-                .foregroundColor(provider.foregroundColor)
-                .cornerRadius(12)
+                .padding(.horizontal, 20)
+                .frame(height: 50)
+                .background(Color.white)
+                .cornerRadius(50)  // Fully rounded pill shape
+                .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 3)
             }
         }
     }
     
-    private func handleSocialSignIn() {
+    private func handleSocialSignIn(provider: SocialProvider) {
+        isLoading = true
+        errorMessage = nil
+        
         Task {
             do {
-                switch provider {
-                case .apple:
-                    break
-                case .google:
+                if provider == .google {
                     try await authService.signInWithGoogle()
-                case .facebook:
-                    authService.signInWithFacebook { error in
-                        if let error = error {
-                            print("❌ Social sign in failed for \(provider): \(error.localizedDescription)")
-                        } else {
-                            userJourney.advance(to: .accountCreated)
-                        }
-                    }
                 }
                 
-                if provider != .facebook {
-                    await MainActor.run {
-                        userJourney.advance(to: .accountCreated)
-                    }
+                // UI updates must be on the main thread
+                await MainActor.run {
+                    isLoading = false
+                    userJourney.handleAccountCreated()
                 }
             } catch {
-                print("❌ Social sign in failed for \(provider): \(error.localizedDescription)")
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+        
+        if provider == .facebook {
+            authService.signInWithFacebook { error in
+                isLoading = false
+                if let error = error {
+                    errorMessage = error.localizedDescription
+                } else {
+                    userJourney.handleAccountCreated()
+                }
             }
         }
     }
@@ -323,7 +503,7 @@ struct SocialSignInButton: View {
         do {
             try await authService.handleAppleSignIn(result: result)
             await MainActor.run {
-                userJourney.advance(to: .accountCreated)
+                userJourney.handleAccountCreated()
             }
         } catch {
             print("❌ Apple sign in failed: \(error.localizedDescription)")
@@ -337,7 +517,6 @@ struct EmailSignUpView: View {
     @EnvironmentObject var userJourney: UserJourneyManager
     @Environment(\.dismiss) var dismiss
     
-    @State private var name: String = ""
     @State private var email: String = ""
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
@@ -346,62 +525,74 @@ struct EmailSignUpView: View {
     
     var body: some View {
         NavigationView {
-            Form {
-                Section(header: Text("Your Details")) {
-                    TextField("Name", text: $name)
-                    TextField("Email", text: $email)
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                VStack(spacing: 20) {
+                    Text("Create your account with email")
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                    
+                    TextField("email@example.com", text: $email)
                         .keyboardType(.emailAddress)
                         .autocapitalization(.none)
-                }
-                
-                Section(header: Text("Create a Password")) {
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+                    
                     SecureField("Password", text: $password)
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+
                     SecureField("Confirm Password", text: $confirmPassword)
-                }
-                
-                if let errorMessage = errorMessage {
-                    Section {
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+                    
+                    if let errorMessage = errorMessage {
                         Text(errorMessage)
                             .foregroundColor(.red)
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
                     }
-                }
-                
-                Section {
+                    
                     Button(action: createAccount) {
-                        if isLoading {
-                            ProgressView()
-                        } else {
-                            Text("Create Account")
-                        }
+                        Text("Create Account")
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(isFormValid ? Color.blue : Color.gray)
+                            .foregroundColor(.white)
+                            .cornerRadius(25)
                     }
-                    .disabled(isLoading || !isFormValid)
+                    .disabled(!isFormValid || isLoading)
+                    
+                    Spacer()
                 }
+                .padding()
+                .navigationTitle("Sign Up with Email")
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationBarItems(leading: Button("Cancel") { dismiss() })
             }
-            .navigationTitle("Sign Up with Email")
-            .navigationBarItems(leading: Button("Cancel") { dismiss() })
         }
     }
     
     private var isFormValid: Bool {
-        !name.isEmpty && !email.isEmpty && !password.isEmpty &&
-        password == confirmPassword && password.count >= 6
+        !email.isEmpty && !password.isEmpty && password == confirmPassword && password.count >= 6
     }
     
     private func createAccount() {
         isLoading = true
         errorMessage = nil
         
-        let persistenceManager = OnboardingPersistenceManager()
-        var onboardingData = persistenceManager.getOnboardingData()
-        onboardingData.userName = name
-        persistenceManager.saveOnboardingData(onboardingData)
-        
         Task {
             do {
                 try await authService.signUp(email: email, password: password)
                 await MainActor.run {
                     isLoading = false
-                    userJourney.advance(to: .accountCreated)
+                    print("✅ Email account created successfully.")
+                    // The session change handler in RootView will advance the journey
                     dismiss()
                 }
             } catch {
@@ -410,76 +601,6 @@ struct EmailSignUpView: View {
                     errorMessage = error.localizedDescription
                 }
             }
-        }
-    }
-}
-
-// MARK: - Account Creation View
-struct AccountCreationView: View {
-    @State private var showEmailSignUp = false
-
-    var body: some View {
-        ZStack {
-            // Background Image
-            Image("Heard Onboarding - Background Image")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-            
-            // Dimming Overlay
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
-            
-            VStack {
-                Spacer()
-                
-                // Header
-                VStack(spacing: 10) {
-                    Text("Create Your Account")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                    
-                    Text("Join thousands of others on their reflection journey.")
-                        .font(.headline)
-                        .fontWeight(.regular)
-                        .foregroundColor(.white.opacity(0.8))
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                // Social Login Buttons
-                VStack(spacing: 15) {
-                    SocialSignInButton(provider: .apple)
-                    SocialSignInButton(provider: .google)
-                    SocialSignInButton(provider: .facebook)
-                    
-                    Button(action: {
-                        showEmailSignUp = true
-                    }) {
-                        Text("Continue with Email")
-                            .fontWeight(.medium)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.white.opacity(0.1))
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                    }
-                }
-                .padding()
-                
-                // Terms and Conditions Footer
-                Text("By continuing, you agree to our [Terms of Use](https://www.example.com/terms) and [Privacy Policy](https://www.example.com/privacy).")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.7))
-                    .multilineTextAlignment(.center)
-                    .padding()
-            }
-        }
-        .sheet(isPresented: $showEmailSignUp) {
-            EmailSignUpView()
         }
     }
 }

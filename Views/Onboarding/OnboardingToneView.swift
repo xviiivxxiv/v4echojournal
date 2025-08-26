@@ -13,14 +13,14 @@ struct OnboardingToneView: View {
 
     var body: some View {
         ZStack {
-            Color.backgroundCream.ignoresSafeArea()
+            Color.heardGrey.ignoresSafeArea()
 
             VStack(alignment: .center, spacing: 25) {
                 Spacer()
 
                 Text("How should I respond to you?")
-                    .font(.system(size: 34, weight: .regular, design: .default))
-                    .foregroundColor(.primaryEspresso)
+                    .font(.custom("GentyDemo-Regular", size: 34))
+                    .foregroundColor(.buttonBrown)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
                     .padding(.bottom, 15)
@@ -28,11 +28,13 @@ struct OnboardingToneView: View {
                 ForEach(tones, id: \.self) { tone in
                     Button(action: { selectTone(tone) }) {
                         Text(tone)
-                            .font(.system(size: 18, weight: .medium, design: .rounded))
-                            .foregroundColor(.backgroundCream)
+                            .font(.custom("nicky-laatz-very-vogue-text", size: 18))
+                            .fontWeight(.medium)
+                            .foregroundColor(.buttonBrown)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(Color.buttonBrown)
+                            .padding(.horizontal, 20)
+                            .background(Color.buttonBrown.opacity(0.5))
                             .clipShape(Capsule())
                     }
                     .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)

@@ -2,57 +2,95 @@ import SwiftUI
 import SuperwallKit
 
 struct AhaOnboardingView: View {
+    @EnvironmentObject var userJourney: UserJourneyManager
     @StateObject private var viewModel = AhaOnboardingViewModel()
     
     // This flag will be set to true when the user proceeds from the paywall
     @EnvironmentObject var settings: SettingsManager
-    @EnvironmentObject var userJourney: UserJourneyManager
 
     var body: some View {
-        ZStack {
-            // Background color
-            Color.backgroundCream.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                // Background color
+                Color.heardGrey.ignoresSafeArea()
 
-            VStack(spacing: 20) {
-                Spacer()
-                
-                // Title and status
-                Text(viewModel.statusMessage)
-                    .font(.title2)
-                    .fontWeight(.medium)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                    .foregroundColor(.primaryEspresso) // Use brand color
-                
-                if let error = viewModel.errorMessage {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
-                        .padding()
-                }
-
-                // Main content based on state
-                Group {
+                VStack(spacing: 0) {
+                    // Main content based on state
                     switch viewModel.currentState {
                     case .idle, .recording:
-                        micButton
+                        VStack(spacing: 0) {
+                            // Top section - Text area (30% of screen)
+                            VStack {
+                                Spacer()
+                                Text(viewModel.statusMessage)
+                                    .font(.custom("nicky-laatz-very-vogue-display", size: 28))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                                    .foregroundColor(.buttonBrown)
+                                Spacer()
+                            }
+                            .frame(height: geometry.size.height * 0.30)
+                            
+                            // Middle section - Button area (40% of screen, button centered within)
+                            VStack {
+                                Spacer()
+                                micButton
+                                Spacer()
+                            }
+                            .frame(height: geometry.size.height * 0.40)
+                            
+                            // Bottom section - Soundwave area (30% of screen)
+                            VStack {
+                                Spacer()
+                                if viewModel.isRecording {
+                                    SoundWaveView(isRecording: viewModel.isRecording)
+                                        .transition(.opacity.combined(with: .scale))
+                                } else {
+                                    // Invisible placeholder to maintain consistent spacing
+                                    Rectangle()
+                                        .fill(Color.clear)
+                                        .frame(height: 92)
+                                }
+                                Spacer()
+                            }
+                            .frame(height: geometry.size.height * 0.30)
+                        }
                     case .transcribing, .thinking:
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .padding(.vertical, 40)
+                        // Return to original centered layout for thinking state
+                        VStack {
+                            Spacer()
+                            Text(viewModel.statusMessage)
+                                .font(.custom("nicky-laatz-very-vogue-display", size: 28))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                                .foregroundColor(.buttonBrown)
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .padding(.vertical, 40)
+                            Spacer()
+                        }
                     case .showingAhaMoment:
-                        ahaMomentView
+                        // Return to original layout for follow-up view
+                        VStack {
+                            Spacer()
+                            Text("Mmmmhh... Interesting")
+                                .font(.custom("GentyDemo-Regular", size: 28))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                                .foregroundColor(.buttonBrown)
+                                .padding(.bottom, 20)
+                            ahaMomentView
+                            Spacer()
+                        }
                     }
                 }
-                
-                Spacer()
-                Spacer()
             }
-            .padding()
         }
         .onAppear {
             // Set up Superwall delegate and user identification
             setupSuperwall()
+            viewModel.generateDynamicPrompt(from: userJourney)
+            // The paywall is now presented after account creation by the UserJourneyManager.
         }
     }
     
@@ -62,7 +100,7 @@ struct AhaOnboardingView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 100, height: 100)
-                .foregroundColor(viewModel.isRecording ? .red : .buttonBrown)
+                .foregroundColor(viewModel.isRecording ? .heardRecordButtonRed : .buttonBrown)
                 .scaleEffect(viewModel.isRecording ? 1.1 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.5), value: viewModel.isRecording)
         }
@@ -70,36 +108,45 @@ struct AhaOnboardingView: View {
     }
     
     private var ahaMomentView: some View {
-        VStack(alignment: .leading, spacing: 25) {
+        VStack(spacing: 25) {
             if let userText = viewModel.transcribedText {
-                VStack(alignment: .leading) {
-                    Text("YOU SAID:")
-                        .font(.caption)
-                        .foregroundColor(.secondaryTaupe) // Use brand color
+                // 2. User text bubble with heard cream background
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("you said:")
+                        .font(.custom("nicky-laatz-very-vogue-text", size: 12))
+                        .foregroundColor(.buttonBrown)
                     Text(userText)
-                        .font(.body)
-                        .foregroundColor(.primaryEspresso) // Use brand color
+                        .font(.custom("nicky-laatz-very-vogue-text", size: 16))
+                        .foregroundColor(.buttonBrown)
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.backgroundCream) // heard cream background
+                .cornerRadius(12)
             }
             
             if let aiQuestion = viewModel.aiFollowUpQuestion {
-                 VStack(alignment: .leading) {
-                     Text("AI FOLLOW-UP:")
-                         .font(.caption)
-                         .foregroundColor(.secondaryTaupe) // Use brand color
-                     Text(aiQuestion)
-                         .font(.title3)
-                         .fontWeight(.bold)
-                         .foregroundColor(.primaryEspresso) // Use brand color
-                 }
+                // 3. AI response bubble with heard cream background and "heard says:"
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("heard says:")
+                        .font(.custom("nicky-laatz-very-vogue-text", size: 12))
+                        .foregroundColor(.buttonBrown)
+                    Text(aiQuestion)
+                        .font(.custom("nicky-laatz-very-vogue-display", size: 18))
+                        .foregroundColor(.buttonBrown)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.backgroundCream) // heard cream background
+                .cornerRadius(12)
             }
             
             Spacer(minLength: 30)
 
             // New Call to Action
-            Text("Reply here...")
-                .font(.headline)
-                .foregroundColor(.secondaryTaupe)
+            Text("Reply here....")
+                .font(.custom("nicky-laatz-very-vogue-text", size: 18))
+                .foregroundColor(.buttonBrown)
             
             Button(action: {
                 // Advance to the pre-account creation interstitial
@@ -114,8 +161,6 @@ struct AhaOnboardingView: View {
             .padding(.top, 10)
         }
         .padding()
-        .background(Color.white.opacity(0.5))
-        .cornerRadius(15)
     }
     
     // MARK: - Superwall Integration
@@ -150,9 +195,11 @@ struct AhaOnboardingView: View {
 
 class SuperwallDelegateHandler: SuperwallDelegate {
     private let onPurchaseComplete: () -> Void
+    private let onDismiss: (() -> Void)?
     
-    init(onPurchaseComplete: @escaping () -> Void) {
+    init(onPurchaseComplete: @escaping () -> Void, onDismiss: (() -> Void)? = nil) {
         self.onPurchaseComplete = onPurchaseComplete
+        self.onDismiss = onDismiss
     }
     
     func handleSuperwallEvent(withInfo eventInfo: SuperwallEventInfo) {
@@ -164,6 +211,8 @@ class SuperwallDelegateHandler: SuperwallDelegate {
             print("Transaction failed: \(error)")
         case .paywallClose:
             print("Paywall was closed")
+            // Call the dismiss handler if provided
+            onDismiss?()
         default:
             break
         }

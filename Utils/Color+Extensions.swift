@@ -7,6 +7,9 @@ extension Color {
     static let buttonBrown = Color(hex: "5C4433")
     static let accentWarmNeutral = Color(hex: "896A47")
     static let accentPaleGrey = Color(hex: "EFEFEC")
+    static let heardGrey = Color(hex: "EFEFEC") // Heard Grey background color
+    static let heardRecordButtonRed = Color(hex: "d68e8e") // Heard record button red
+    static let heardCreamBoxes = Color(hex: "efe5da") // Heard cream for setting boxes
     static let neutralGray = Color(hex: "6A6A6A")
     static let quoteTextTaupe = Color(hex: "5A4A42")
     static let quoteBubbleBeige = Color(hex: "F4EFEA")

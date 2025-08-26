@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import FirebaseAuth
+import SuperwallKit
 
 // MARK: - App State Machine
 enum AppState: String, CaseIterable {
@@ -17,7 +18,6 @@ enum AppState: String, CaseIterable {
     case accountCreated
     case paywallPresented
     case subscriptionActive
-    case personalizationInProgress
     case fullyOnboarded
     
     // Core app states
@@ -36,7 +36,6 @@ enum AppState: String, CaseIterable {
         case .subscriptionActive: return "Subscription Active"
         case .accountCreationInProgress: return "Account Creation In Progress"
         case .accountCreated: return "Account Created"
-        case .personalizationInProgress: return "Personalization In Progress"
         case .fullyOnboarded: return "Fully Onboarded"
         case .returningUserAuth: return "Returning User Auth"
         case .mainApp: return "Main App"
@@ -146,6 +145,26 @@ class UserJourneyManager: ObservableObject {
         isRecovering = false
         lastError = nil
     }
+
+    // MARK: - Event Handlers
+
+    func handleAccountCreated() {
+        print("✅ Account created. Committing data and preparing to show paywall...")
+        // First, formally enter the 'accountCreated' state.
+        // This triggers the side effect in 'handleStateTransition' to save data.
+        advance(to: .accountCreated)
+        
+        // Now that the data is saved, present the paywall.
+        presentPaywall()
+
+        // After triggering the paywall, transition the state machine to wait for its outcome.
+        advance(to: .paywallPresented)
+    }
+
+    func presentPaywall() {
+        print("📲 Triggering Superwall placement...")
+        Superwall.shared.register(placement: "onboarding_aha_moment_reached")
+    }
     
     // MARK: - State Validation
     
@@ -163,12 +182,12 @@ class UserJourneyManager: ObservableObject {
         case (.accountCreationInProgress, .accountCreated): return true
         
         // Paywall is now after account creation
-        case (.accountCreated, .paywallPresented): return true // <-- New Transition
+        case (.accountCreated, .paywallPresented): return true
         case (.paywallPresented, .subscriptionActive): return true
+        case (.paywallPresented, .fullyOnboarded): return true // Allow skipping subscription if paywall dismissed
         
-        // Final steps
-        case (.subscriptionActive, .personalizationInProgress): return true
-        case (.personalizationInProgress, .fullyOnboarded): return true
+        // Final steps - direct transition, skipping personalization
+        case (.subscriptionActive, .fullyOnboarded): return true
         
         // Main app access
         case (.fullyOnboarded, .mainApp): return true
@@ -195,8 +214,10 @@ class UserJourneyManager: ObservableObject {
                 advance(to: .paywallPresented, context: context)
             } else if !hasValidAccount() {
                 advance(to: .accountCreationInProgress, context: context)
-            } else if !hasCompletedPersonalization() {
-                advance(to: .personalizationInProgress, context: context)
+            } else if !settings.hasCompletedFullOnboarding { // Updated logic
+                // If all else is fine, they must be fully onboarded to proceed.
+                // This case should ideally not be hit if the flow is correct.
+                advance(to: .fullyOnboarded, context: context)
             } else {
                 // Force transition if all prerequisites met
                 currentState = .mainApp
@@ -220,7 +241,7 @@ class UserJourneyManager: ObservableObject {
             persistenceManager.commitTemporaryDataToFirebase()
             
         case .fullyOnboarded:
-            // Onboarding complete - mark in settings
+            // Onboarding complete - mark in settings. This is the source of truth.
             settings.hasCompletedFullOnboarding = true
             
         case .mainApp:
@@ -242,9 +263,6 @@ class UserJourneyManager: ObservableObject {
             
         case .accountCreationInProgress:
             return .retry // Retry account creation
-            
-        case .personalizationInProgress:
-            return .skipToNext // Skip optional personalization
             
         case .returningUserAuth:
             return .retry // Retry authentication
@@ -299,10 +317,6 @@ class UserJourneyManager: ObservableObject {
         return currentState == .accountCreationInProgress
     }
     
-    func shouldShowPersonalization() -> Bool {
-        return currentState == .personalizationInProgress
-    }
-    
     func shouldShowReturningUserAuth() -> Bool {
         return currentState == .returningUserAuth
     }
@@ -341,10 +355,9 @@ class UserJourneyManager: ObservableObject {
     private func getNextValidState(from current: AppState) -> AppState? {
         switch current {
         case .paywallPresented: return .subscriptionActive
-        case .subscriptionActive: return .accountCreationInProgress
+        case .subscriptionActive: return .fullyOnboarded
         case .accountCreationInProgress: return .accountCreated
-        case .accountCreated: return .personalizationInProgress
-        case .personalizationInProgress: return .fullyOnboarded
+        case .accountCreated: return .fullyOnboarded // Skip personalization
         case .fullyOnboarded: return .mainApp
         default: return nil
         }
@@ -363,6 +376,6 @@ class UserJourneyManager: ObservableObject {
         print("   - lastError: \(lastError ?? "none")")
         print("   - hasValidSubscription: \(hasValidSubscription())")
         print("   - hasValidAccount: \(hasValidAccount())")
-        print("   - hasCompletedPersonalization: \(hasCompletedPersonalization())")
+        print("   - hasCompletedPersonalization: \(settings.hasCompletedFullOnboarding)")
     }
 } 

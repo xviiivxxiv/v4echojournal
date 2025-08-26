@@ -20,7 +20,7 @@ struct WelcomeView: View {
                     .padding(.bottom, 10)
 
                 Text("Because some things need to be heard.")
-                    .font(.system(size: 18, weight: .regular, design: .default))
+                    .font(.custom("nicky-laatz-very-vogue-text", size: 18))
                     .foregroundColor(.primaryEspresso)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
@@ -31,7 +31,8 @@ struct WelcomeView: View {
                     userJourney.advance(to: .onboardingGoal)
                 }) {
                     Text("Get Started")
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .font(.custom("nicky-laatz-very-vogue-text", size: 18))
+                        .fontWeight(.semibold)
                         .foregroundColor(.backgroundCream)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)

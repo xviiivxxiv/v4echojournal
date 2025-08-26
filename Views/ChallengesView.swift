@@ -9,55 +9,68 @@ struct ChallengesView: View {
     @Binding var selectedChallengeForModal: Challenge?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 25) {
-                Text("Challenges")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(Color.buttonBrown)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 15)
+        if homeViewModel.isLoading {
+            VStack {
+                Spacer()
+                ProgressView()
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .background(Color.backgroundCream.ignoresSafeArea())
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 25) {
+                    // Header section matching Settings style
+                    VStack(spacing: 0) {
+                        Text("Challenges")
+                            .font(.custom("GentyDemo-Regular", size: 34))
+                            .foregroundColor(.buttonBrown)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 35) // Closer to status bar while maintaining safe spacing
                     .padding(.bottom, 10)
 
-                // Section for Active Challenges
-                if !homeViewModel.activeChallenges.isEmpty {
-                    VStack(alignment: .leading, spacing: 15) {
-                        ForEach(homeViewModel.activeChallenges) { attempt in
-                            if let challenge = homeViewModel.getChallenge(from: attempt) {
-                                ActiveChallengeCardView(
-                                    challenge: challenge,
-                                    attempt: attempt,
-                                    homeViewModel: homeViewModel,
-                                    mainSelectedTab: $mainSelectedTab
-                                )
+                    // Section for Active Challenges
+                    if !homeViewModel.activeChallenges.isEmpty {
+                        VStack(alignment: .leading, spacing: 15) {
+                            ForEach(homeViewModel.activeChallenges) { attempt in
+                                if let challenge = homeViewModel.getChallenge(from: attempt) {
+                                    ActiveChallengeCardView(
+                                        challenge: challenge,
+                                        attempt: attempt,
+                                        homeViewModel: homeViewModel,
+                                        mainSelectedTab: $mainSelectedTab
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Section for Available Challenges
+                    // Re-calculate available challenges directly here based on the single source of truth
+                    let availableChallenges = ChallengeData.samples.filter { challenge in
+                        !homeViewModel.activeChallenges.contains { $0.challengeID == challenge.id.uuidString }
+                    }
+                    
+                    if !availableChallenges.isEmpty {
+                        VStack(alignment: .leading, spacing: 15) {
+                            ForEach(availableChallenges) { challenge in
+                                ChallengeCardView(challenge: challenge)
+                                    .onTapGesture {
+                                        withAnimation {
+                                            selectedChallengeForModal = challenge
+                                        }
+                                    }
                             }
                         }
                     }
                 }
-                
-                // Section for Available Challenges
-                // Re-calculate available challenges directly here based on the single source of truth
-                let availableChallenges = ChallengeData.samples.filter { challenge in
-                    !homeViewModel.activeChallenges.contains { $0.challengeID == challenge.id.uuidString }
-                }
-                
-                if !availableChallenges.isEmpty {
-                    VStack(alignment: .leading, spacing: 15) {
-                        ForEach(availableChallenges) { challenge in
-                            ChallengeCardView(challenge: challenge)
-                                .onTapGesture {
-                                    withAnimation {
-                                        selectedChallengeForModal = challenge
-                                    }
-                                }
-                        }
-                    }
-                }
+                .padding(.horizontal)
             }
-            .padding(.horizontal)
-        }
-        .background(Color.backgroundCream.ignoresSafeArea())
-        .onAppear {
-            homeViewModel.fetchActiveChallenges()
+            .background(Color.backgroundCream.ignoresSafeArea())
+            .onAppear {
+                homeViewModel.fetchActiveChallenges()
+            }
         }
     }
 }

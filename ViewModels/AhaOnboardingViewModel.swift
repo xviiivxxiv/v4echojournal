@@ -41,8 +41,7 @@ class AhaOnboardingViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isRecording)
             
-        // Generate the dynamic prompt upon initialization
-        generateDynamicPrompt()
+        // The dynamic prompt is now generated on view appear, not init.
     }
 
     func handleMicButtonTapped() {
@@ -111,7 +110,8 @@ class AhaOnboardingViewModel: ObservableObject {
         }
     }
     
-    private func generateDynamicPrompt() {
+    // Made internal and updated to accept UserJourneyManager
+    func generateDynamicPrompt(from userJourney: UserJourneyManager) {
         let onboardingData = persistenceManager.getOnboardingData()
         let goal = onboardingData.selectedGoal
         let tone = onboardingData.selectedTone

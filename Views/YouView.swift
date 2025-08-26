@@ -74,25 +74,14 @@ struct YouView: View {
     // MARK: - Custom Header for YouView
     @ViewBuilder
     private var customHeaderForYouView: some View {
-        HStack {
-            Spacer() // Pushes "you" text and icon away from leading edge
-            
-            Text("you") 
-                .font(.system(size: 24, weight: .bold))
-                .foregroundColor(Color(hex: "5C4433"))
-                .textCase(.lowercase)
-            
-            Spacer() // Allows "you" text to center, pushes icon to trailing
-
-            NavigationLink(destination: SettingsView()) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(Color(hex: "5C4433")) 
-            }
+        VStack(spacing: 0) {
+            // "You" text centered independently
+            Text("You")
+                .font(.custom("GentyDemo-Regular", size: 34))
+                .foregroundColor(.buttonBrown)
         }
-        .padding(.horizontal) 
-        .padding(.top, 15)    
-        .frame(height: 44)    
+        .frame(maxWidth: .infinity) // Ensure full width for proper centering
+        .padding(.top, 25) // Moved up further to align perfectly with other headers
     }
 
     private func processFetchedEntries(entries: [JournalEntryCD]) {

@@ -2,9 +2,8 @@ import SwiftUI
 import CoreData
 
 struct HomeView: View {
-    @StateObject private var viewModel = HomeViewModel(
-        transcriptionService: WhisperTranscriptionService.shared
-    )
+    // This view now receives its ViewModel from the environment.
+    @EnvironmentObject var viewModel: HomeViewModel
     @State private var navigationPath = NavigationPath()
     @State private var selectedChallengeForModal: Challenge?
 

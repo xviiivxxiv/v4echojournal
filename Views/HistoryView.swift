@@ -59,13 +59,15 @@ struct HistoryView: View {
                     ScrollView {
                         // The LazyVStack also has no horizontal padding, allowing its content to be controlled individually.
                         LazyVStack(alignment: .leading, spacing: 25) {
-                            // Custom "Journal" title, styled like YouView's header
-                            Text("Journal")
-                                .font(.system(size: 24, weight: .bold))
-                                .foregroundColor(Color(hex: "#fdf9f3")) // Cream text for contrast
-                                .frame(maxWidth: .infinity, alignment: .center) // Center align
-                                .padding(.top, 15)
-                                .padding(.bottom, 10) // Space between title and first date
+                            // Header section matching Settings/Challenges/You style
+                            VStack(spacing: 0) {
+                                Text("Journal")
+                                    .font(.custom("GentyDemo-Regular", size: 34))
+                                    .foregroundColor(.backgroundCream) // Heard cream color
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 35) // Closer to status bar while maintaining safe spacing
+                            .padding(.bottom, 10) // Space between title and first date
                             
                             Color.clear.frame(height: 0).id(topID)
 
@@ -132,13 +134,26 @@ struct HistoryView: View {
     }
 
     private var emptyStateView: some View {
+        VStack(spacing: 0) {
+            // Header section matching Settings/Challenges/You style
+            VStack(spacing: 0) {
+                Text("Journal")
+                    .font(.custom("GentyDemo-Regular", size: 34))
+                    .foregroundColor(.backgroundCream) // Heard cream color
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 35) // Closer to status bar while maintaining safe spacing
+            .padding(.bottom, 10) // Space between title and content
+            
+            // Empty state content
             VStack {
-                    Spacer()
-                    Text("No journal entries yet.")
-                .font(.system(size: 18, weight: .regular, design: .default)) // SF Pro
-                        .foregroundColor(.secondaryTaupe)
-                        .padding()
-                    Spacer()
+                Spacer()
+                Text("No journal entries yet.")
+                    .font(.system(size: 18, weight: .regular, design: .default)) // SF Pro
+                    .foregroundColor(.secondaryTaupe)
+                    .padding()
+                Spacer()
+            }
         }
     }
 }

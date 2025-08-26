@@ -50,6 +50,9 @@ class HomeViewModel: ObservableObject {
     @Published var tappedDateForModal: Date? = nil
     @Published var entryForTappedDate: JournalEntryCD? = nil
 
+    // NEW: Flag to indicate when the view model is ready to be displayed
+    @Published var isReady = false
+
     // ADDED: Properties for Challenge Mode
     @Published var activeChallenges: [ChallengeAttempt] = []
     @Published var availableModes: [JournalEntryMode] = [.standard]
@@ -289,11 +292,15 @@ class HomeViewModel: ObservableObject {
 
     // ADDED: Function to fetch active challenges and set up available modes
     func fetchActiveChallenges() {
+        print("🎯 fetchActiveChallenges() called")
+        isLoading = true
         let request: NSFetchRequest<ChallengeAttempt> = ChallengeAttempt.fetchRequest()
         request.sortDescriptors = [NSSortDescriptor(keyPath: \ChallengeAttempt.startDate, ascending: true)]
         
         do {
+            print("🔍 Fetching challenge attempts from Core Data...")
             let attempts = try viewContext.fetch(request)
+            print("✅ Fetched \(attempts.count) challenge attempts")
             self.activeChallenges = attempts
             
             // Rebuild the available modes list
@@ -313,9 +320,14 @@ class HomeViewModel: ObservableObject {
             if !self.availableModes.contains(self.selectedMode) {
                 self.selectedMode = .standard
             }
-
+            isLoading = false
+            print("✅ Setting isReady = true (success)")
+            isReady = true // Mark as ready after the first successful fetch
         } catch {
             print("❌ Error fetching active challenges: \(error.localizedDescription)")
+            isLoading = false
+            print("✅ Setting isReady = true (failure)")
+            isReady = true // Also mark as ready on failure to unblock the UI
         }
     }
     

@@ -232,27 +232,15 @@ final class GPTService {
 
         Pick only the best possible question based on where they are in the conversation — as if you only had one chance to help them go a layer deeper.
         """
-        // Re-add force-unwrap: ensure systemMsgParam is non-optional
-        let systemMsgParam = ChatQuery.ChatCompletionMessageParam(role: .system, content: systemMessageContent)!
-        let historyParams: [ChatQuery.ChatCompletionMessageParam] = history.compactMap { msg in
-             let role: ChatQuery.ChatCompletionMessageParam.Role = (msg.role == .user) ? .user : .assistant
-             return .init(role: role, content: msg.content)
+        
+        // Prepare messages for our Encodable payload struct directly
+        let systemMessagePayload = ChatMessagePayload(role: "system", content: systemMessageContent)
+        let historyPayloads = history.map { msg -> ChatMessagePayload in
+            let role = (msg.role == .user) ? "user" : "assistant"
+            return ChatMessagePayload(role: role, content: msg.content)
         }
         
-        // Explicitly type the combined array before mapping
-        let combinedParams: [ChatQuery.ChatCompletionMessageParam] = [systemMsgParam] + historyParams
-        
-        // Convert to our Encodable payload struct by mapping the explicitly typed array
-        let messagesPayload = combinedParams.map { param -> ChatMessagePayload in
-            // Attempt to get string value directly from the Content enum/struct
-            var textContent = ""
-            if let contentValue = param.content { // Safely unwrap the Content?
-                 // Try converting/interpolating the content value directly to String
-                 textContent = "\(contentValue)" 
-                 // Alternatively, if it's RawRepresentable<String>: textContent = contentValue.rawValue ?? ""
-            }
-            return ChatMessagePayload(role: param.role.rawValue, content: textContent)
-        }
+        let messagesPayload = [systemMessagePayload] + historyPayloads
 
         // Create request body using Encodable struct
         let requestBody = ChatCompletionRequestBody(
@@ -358,13 +346,13 @@ final class GPTService {
         // Construct the messages for the API call using compactMap and qualified roles
         let baseMessages: [ChatQuery.ChatCompletionMessageParam] = [
             .init(role: .system, content: "You are a helpful journaling assistant. Analyze the provided journal entry and the optional previous context (summary of prior entries). Identify key themes, emotions, and insights. Respond concisely, perhaps with bullet points or a short summary, focusing on reflective observations rather than generic advice. If previous context is provided, try to link the current entry to it."),
-            .init(role: .user, content: "Current entry: \\(entry)")
+            .init(role: .user, content: "Current entry: \(entry)")
         ].compactMap { $0 } // Use compactMap
 
         // Include previous context only if it's not empty
         var allMessages = baseMessages
         if !previousContext.isEmpty {
-            if let contextMessage = ChatQuery.ChatCompletionMessageParam(role: .user, content: "Previous context: \\(previousContext)") {
+            if let contextMessage = ChatQuery.ChatCompletionMessageParam(role: .user, content: "Previous context: \(previousContext)") {
                 allMessages.insert(contextMessage, at: 1)
             }
         }

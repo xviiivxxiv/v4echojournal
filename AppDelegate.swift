@@ -3,6 +3,8 @@ import FirebaseCore
 import SuperwallKit
 import FacebookCore
 import GoogleSignIn
+import FirebaseAuth // Added for Auth.auth()
+import FirebaseAppCheck
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,

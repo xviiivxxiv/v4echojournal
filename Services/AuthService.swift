@@ -38,6 +38,17 @@ class AuthService: ObservableObject {
         try await Auth.auth().signIn(withEmail: email, password: password)
     }
     
+    func sendSignInLink(to email: String, completion: @escaping (Error?) -> Void) {
+        let actionCodeSettings = ActionCodeSettings()
+        actionCodeSettings.url = URL(string: "https://v4echojournal.page.link/finishSignUp")
+        actionCodeSettings.handleCodeInApp = true
+        actionCodeSettings.setIOSBundleID(Bundle.main.bundleIdentifier!)
+        
+        Auth.auth().sendSignInLink(toEmail: email, actionCodeSettings: actionCodeSettings) { error in
+            completion(error)
+        }
+    }
+    
     // MARK: - Social Logins
     
     func signInWithGoogle() async throws {

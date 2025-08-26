@@ -38,7 +38,11 @@
 	<string>pk_6a1858950ed4e5f8020095f48dea661eb7ea11e91489719d</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>SF-Pro-Display-Regular.otf</string>
+		<string>GentyDemo-Regular.ttf</string>
+		<string>nicky-laatz-very-vogue-display.otf</string>
+		<string>nicky-laatz-very-vogue-display-italic.otf</string>
+		<string>nicky-laatz-very-vogue-text.otf</string>
+		<string>nicky-laatz-very-vogue-text-italic.otf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

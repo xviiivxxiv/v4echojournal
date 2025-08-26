@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="23788" systemVersion="24C101" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="YES" userDefinedModelVersionIdentifier="">
+    <entity name="ChallengeAttempt" representedClassName="ChallengeAttempt" syncable="YES" codeGenerationType="class">
+        <attribute name="challengeID" optional="YES" attributeType="String"/>
+        <attribute name="completedDays" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="startDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="journalEntries" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="JournalEntryCD" inverseName="challengeAttempt" inverseEntity="JournalEntryCD"/>
+    </entity>
+    <entity name="ConversationMessage" representedClassName="ConversationMessage" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="sender" optional="YES" attributeType="String"/>
+        <attribute name="text" optional="YES" attributeType="String"/>
+        <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="journalEntry" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="JournalEntryCD" inverseName="messages" inverseEntity="JournalEntryCD"/>
+    </entity>
+    <entity name="FollowUpCD" representedClassName="FollowUpCD" syncable="YES" codeGenerationType="class">
+        <attribute name="answer" optional="YES" attributeType="String"/>
+        <attribute name="answeredAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="question" optional="YES" attributeType="String"/>
+        <relationship name="journalEntry" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="JournalEntryCD" inverseName="followups" inverseEntity="JournalEntryCD"/>
+    </entity>
+    <entity name="FutureEntryCD" representedClassName="FutureEntryCD" syncable="YES" codeGenerationType="class">
+        <attribute name="audioURL" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="deliveryDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="message" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="IdentifiedFeelingCD" representedClassName="IdentifiedFeelingCD" syncable="YES" codeGenerationType="class">
+        <attribute name="category" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="journalEntry" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="JournalEntryCD" inverseName="identifiedFeelings" inverseEntity="JournalEntryCD"/>
+    </entity>
+    <entity name="JournalEntryCD" representedClassName="JournalEntryCD" syncable="YES" codeGenerationType="class">
+        <attribute name="aiSummary" optional="YES" attributeType="String"/>
+        <attribute name="audioURL" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="entryText" optional="YES" attributeType="String"/>
+        <attribute name="headline" optional="YES" attributeType="String"/>
+        <attribute name="highestStreak" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="keywords" optional="YES" attributeType="String"/>
+        <attribute name="mood" optional="YES" attributeType="String"/>
+        <attribute name="userSelectedFeelingCategory" optional="YES" attributeType="String"/>
+        <relationship name="challengeAttempt" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="ChallengeAttempt" inverseName="journalEntries" inverseEntity="ChallengeAttempt"/>
+        <relationship name="followups" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="FollowUpCD" inverseName="journalEntry" inverseEntity="FollowUpCD"/>
+        <relationship name="identifiedFeelings" optional="YES" toMany="YES" deletionRule="Cascade" ordered="YES" destinationEntity="IdentifiedFeelingCD" inverseName="journalEntry" inverseEntity="IdentifiedFeelingCD"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" ordered="YES" destinationEntity="ConversationMessage" inverseName="journalEntry" inverseEntity="ConversationMessage"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Cascade" ordered="YES" destinationEntity="JournalPhoto" inverseName="journalEntry" inverseEntity="JournalPhoto"/>
+    </entity>
+    <entity name="JournalPhoto" representedClassName="JournalPhoto" syncable="YES" codeGenerationType="class">
+        <attribute name="caption" optional="YES" attributeType="String"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="imageData" attributeType="Binary"/>
+        <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="journalEntry" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="JournalEntryCD" inverseName="photos" inverseEntity="JournalEntryCD"/>
+    </entity>
+</model>
