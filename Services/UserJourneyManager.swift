@@ -162,7 +162,13 @@ class UserJourneyManager: ObservableObject {
     }
 
     func presentPaywall() {
-        print("📲 Triggering Superwall placement...")
+        // CRITICAL: Only show paywall for genuine new users
+        guard !settings.hasCompletedFullOnboarding else {
+            print("🚫 Skipping Superwall for returning user - they've already completed onboarding")
+            return
+        }
+        
+        print("📲 Triggering Superwall placement for new user...")
         Superwall.shared.register(placement: "onboarding_aha_moment_reached")
     }
     
@@ -192,6 +198,15 @@ class UserJourneyManager: ObservableObject {
         // Main app access
         case (.fullyOnboarded, .mainApp): return true
         case (.returningUserAuth, .mainApp): return true
+        
+        // Logout recovery flow - allow returning user to go back to account creation for sign-in
+        case (.returningUserAuth, .accountCreationInProgress): return true
+        
+        // Allow direct transition to fullyOnboarded for returning users (skip paywall)
+        case (.accountCreated, .fullyOnboarded): return true
+        
+        // Allow direct transition to mainApp for returning users (bypass .fullyOnboarded)
+        case (.accountCreationInProgress, .mainApp): return true
         
         // Recovery transitions (always allowed)
         case (_, .firstLaunch): return true // Reset

@@ -89,7 +89,7 @@ struct SettingsView: View {
     // MARK: - Section Views
     
     private var settingsHeaderView: some View {
-        ZStack {
+            ZStack {
             // Back button positioned to leading edge
             HStack {
                 Button(action: {

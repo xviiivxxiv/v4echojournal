@@ -114,27 +114,45 @@ struct PasscodeSetupView: View {
     @State private var didFailConfirmation = false
 
     var body: some View {
-        VStack(spacing: 40) {
-            Spacer()
+        VStack(spacing: 0) {
+            Spacer().frame(height: 60)
+            
+            // Heard logo
+            Image("Heard Logo - Cream - Transparent - Landscape")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 30) // Small, subtle logo
+                .padding(.bottom, 40)
+            
             Text(title)
-                .font(.headline)
+                .font(.custom("GentyDemo-Regular", size: 34))
+                .foregroundColor(.primary)
+                .padding(.bottom, 60)
+                .animation(.easeInOut(duration: 0.3), value: title) // Smooth title transition
             
             PasscodeIndicator(passcode: step == .enter ? newPasscode : confirmationPasscode)
                 .modifier(Shake(animatableData: CGFloat(didFailConfirmation ? 1 : 0)))
+                .padding(.bottom, 60)
+                .animation(.easeInOut(duration: 0.3), value: step) // Smooth indicator transition
             
             Spacer()
             
-            NumberPad(onNumberTapped: handleInput)
+            NumberPad(
+                onNumberTapped: handleInput,
+                onFaceIDTapped: nil,
+                showFaceID: false
+            )
             
             Button("Cancel") {
                 isPresented = false
             }
-            .padding(.top, 20)
-            
-            Spacer()
+            .font(.system(size: 17, weight: .regular))
+            .foregroundColor(.buttonBrown)
+            .padding(.top, 30)
+            .padding(.bottom, 40)
         }
-        .padding()
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.secondaryTaupe.ignoresSafeArea())
     }
     
     private func handleInput(_ digit: String) {
@@ -146,6 +164,16 @@ struct PasscodeSetupView: View {
         if step == .enter {
             if newPasscode.count < 4 {
                 newPasscode += digit
+                
+                // Auto-advance to confirmation step when 4 digits entered
+                if newPasscode.count == 4 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            step = .confirm
+                            title = "Re-enter passcode"
+                        }
+                    }
+                }
             }
         } else {
             if confirmationPasscode.count < 4 {
@@ -208,12 +236,15 @@ struct PasscodeIndicator: View {
     private let maxDigits = 4
     
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 16) {
             ForEach(0..<maxDigits, id: \.self) { index in
                 Circle()
                     .fill(index < passcode.count ? Color.primary : Color.clear)
-                    .overlay(Circle().stroke(Color.gray, lineWidth: 1))
-                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.primary.opacity(0.3), lineWidth: 1.5)
+                    )
+                    .frame(width: 14, height: 14)
             }
         }
     }
@@ -221,6 +252,8 @@ struct PasscodeIndicator: View {
 
 struct NumberPad: View {
     var onNumberTapped: (String) -> Void
+    var onFaceIDTapped: (() -> Void)? = nil
+    var showFaceID: Bool = false
     
     let numbers = [
         ["1", "2", "3"],
@@ -234,21 +267,42 @@ struct NumberPad: View {
             ForEach(numbers, id: \.self) { row in
                 HStack(spacing: 30) {
                     ForEach(row, id: \.self) { number in
-                        Button(action: {
-                            if !number.isEmpty {
-                                onNumberTapped(number)
+                        if number.isEmpty && row == ["", "0", "⌫"] && showFaceID {
+                            // Face ID button in place of empty space
+                            Button(action: {
+                                onFaceIDTapped?()
+                            }) {
+                                Image(systemName: "faceid")
+                                    .font(.system(size: 24, weight: .regular))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 80, height: 80)
+                                    .background(Color.white.opacity(0.5))
+                                    .clipShape(Circle())
                             }
-                        }) {
-                            Text(number)
-                                .font(.title)
-                                .frame(width: 60, height: 60)
-                                .background(
-                                    number.isEmpty ? Color.clear : Color(.systemGray5)
-                                )
+                        } else {
+                            Button(action: {
+                                if !number.isEmpty {
+                                    onNumberTapped(number)
+                                }
+                            }) {
+                                Group {
+                                    if number == "⌫" {
+                                        Image(systemName: "delete.left")
+                                            .font(.system(size: 24, weight: .regular))
+                                    } else {
+                                        Text(number)
+                                            .font(.system(size: 30, weight: .regular, design: .default))
+                                    }
+                                }
                                 .foregroundColor(.primary)
+                                .frame(width: 80, height: 80)
+                                .background(
+                                    number.isEmpty ? Color.clear : Color.white.opacity(0.5)
+                                )
                                 .clipShape(Circle())
+                            }
+                            .disabled(number.isEmpty && !(number.isEmpty && row == ["", "0", "⌫"] && showFaceID))
                         }
-                        .disabled(number.isEmpty)
                     }
                 }
             }

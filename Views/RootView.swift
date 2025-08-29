@@ -112,6 +112,8 @@ struct RootView: View {
         case .accountCreationInProgress:
             AccountCreationView()
                 .onAppear { print("📱 Showing: AccountCreationView") }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.5), value: userJourney.currentState)
             
         case .accountCreated:
             // This is a transitional state. The UserJourneyManager handles the next step.
@@ -137,25 +139,97 @@ struct RootView: View {
                 }
                 .onChange(of: isHomeReady) { _, ready in
                     if ready {
-                        userJourney.advance(to: .mainApp)
+                        withAnimation(.easeInOut(duration: 0.5)) {
+                            userJourney.advance(to: .mainApp)
+                        }
                     }
                 }
+                .transition(.opacity)
             
         // 3. Core App States
         case .returningUserAuth:
-            ReturningUserAuthView()
-                .onAppear { print("📱 Showing: ReturningUserAuthView") }
+            // Go directly to passcode entry instead of intermediate welcome screen
+            PasscodeEntryView(
+                title: "Welcome Back",
+                subtitle: "Use Face ID or enter passcode to enter\nyour journal.",
+                showFaceID: settings.isFaceIDEnabled && KeychainService.getPasscode() != nil,
+                onSuccess: {
+                    // Mark as locally authenticated and advance to main app
+                    print("🔐 Passcode authentication successful, advancing to main app")
+                    
+                    // Ensure HomeViewModel is ready
+                    if homeViewModel == nil {
+                        print("🔧 Creating HomeViewModel for authenticated user")
+                        homeViewModel = HomeViewModel(transcriptionService: WhisperTranscriptionService.shared)
+                        homeViewModel?.fetchActiveChallenges()
+                    }
+                    
+                    // Advance to main app with smooth transition
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        userJourney.advance(to: .mainApp)
+                    }
+                },
+                onCancel: {
+                    // For main auth, we can't really "cancel" - maybe show manual sign in
+                    userJourney.advance(to: .mainApp) // or handle differently
+                },
+                onFaceID: {
+                    Task {
+                        let context = LAContext()
+                        let reason = "Use Face ID to access your journal"
+                        
+                        do {
+                            let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
+                            if success {
+                                await MainActor.run {
+                                    print("🔐 Face ID authentication successful, advancing to main app")
+                                    
+                                    // Ensure HomeViewModel is ready
+                                    if homeViewModel == nil {
+                                        print("🔧 Creating HomeViewModel for authenticated user")
+                                        homeViewModel = HomeViewModel(transcriptionService: WhisperTranscriptionService.shared)
+                                        homeViewModel?.fetchActiveChallenges()
+                                    }
+                                    
+                                    // Advance to main app with smooth transition
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        userJourney.advance(to: .mainApp)
+                                    }
+                                }
+                            }
+                        } catch {
+                            print("Face ID failed: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            )
+            .onAppear { print("📱 Showing: Direct PasscodeEntryView") }
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.5), value: userJourney.currentState)
             
         case .mainApp:
             // The MainTabView will now pull the homeViewModel from the environment.
-            // A non-nil check is performed here to ensure it exists before showing the view.
+            // Enhanced handling for both new users and returning users
             if homeViewModel != nil {
                 MainTabView()
-                    .onAppear { print("📱 Showing: MainTabView") }
+                    .onAppear { 
+                        print("📱 Showing: MainTabView with initialized HomeViewModel")
+                    }
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.5), value: userJourney.currentState)
             } else {
-                // This fallback provides a safe view if the ViewModel isn't ready,
-                // preventing a crash.
+                // Fallback: Initialize HomeViewModel if somehow missing
                 loadingView("Loading...")
+                    .onAppear {
+                        print("🔧 Fallback: Initializing missing HomeViewModel")
+                        homeViewModel = HomeViewModel(transcriptionService: WhisperTranscriptionService.shared)
+                        
+                        // Quick initialization
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            homeViewModel?.fetchActiveChallenges()
+                        }
+                    }
+                    .transition(.opacity)
             }
         }
     }
@@ -233,8 +307,27 @@ struct RootView: View {
             // Handle session restoration based on current state
             switch userJourney.currentState {
             case .accountCreationInProgress:
-                // Account creation succeeded, let the manager handle the next step
-                userJourney.handleAccountCreated()
+                // Account creation succeeded - check if this is returning user or new user
+                if settings.hasCompletedFullOnboarding {
+                    // This is a RETURNING USER (forgot passcode flow) - skip paywall AND .fullyOnboarded
+                    print("🔄 Returning user re-authenticated - going directly to main app")
+                    
+                    // Pre-initialize HomeViewModel to prevent conflicts
+                    if homeViewModel == nil {
+                        print("🔧 Pre-initializing HomeViewModel for returning user")
+                        homeViewModel = HomeViewModel(transcriptionService: WhisperTranscriptionService.shared)
+                        homeViewModel?.fetchActiveChallenges()
+                    }
+                    
+                    // Go directly to main app, bypassing .fullyOnboarded state
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        userJourney.advance(to: .mainApp)
+                    }
+                } else {
+                    // This is a NEW USER - show paywall as normal
+                    print("🎆 New user account created - proceeding with paywall")
+                    userJourney.handleAccountCreated()
+                }
                 
             case .returningUserAuth:
                 // Returning user authenticated via Firebase - still need local auth
@@ -245,10 +338,27 @@ struct RootView: View {
                 break
             }
         } else {
-            // User logged out
-            if userJourney.currentState == .mainApp {
-                // Force back to auth if user was in main app
+            // User logged out - handle different logout scenarios
+            print("🔐 Firebase user logged out, current state: \(userJourney.currentState)")
+            
+            switch userJourney.currentState {
+            case .mainApp:
+                // User logged out from main app - back to auth
                 userJourney.advance(to: .returningUserAuth)
+                
+            case .returningUserAuth:
+                // User logged out from passcode screen (forgot passcode) - route to sign-in
+                print("🔐 Logout from passcode screen - routing to sign-in")
+                homeViewModel = nil // Clean up user-specific data
+                
+                // Smooth transition to account creation
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    userJourney.advance(to: .accountCreationInProgress)
+                }
+                
+            default:
+                // Other states - minimal impact
+                break
             }
         }
     }
@@ -741,142 +851,123 @@ struct SelectionButtonStyle: ButtonStyle {
     }
 }
 
-// MARK: - Returning User Auth View
-struct ReturningUserAuthView: View {
-    @EnvironmentObject var userJourney: UserJourneyManager
-    @EnvironmentObject var settings: SettingsManager
-    @State private var showingPasscodeEntry = false
-    @State private var showingManualSignIn = false
-    
-    var body: some View {
-        VStack(spacing: 40) {
-            Spacer()
-            
-            Text("Welcome Back")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-            
-            Text("Please authenticate to continue")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            VStack(spacing: 20) {
-                if settings.isFaceIDEnabled && KeychainService.getPasscode() != nil {
-                    Button("Use Face ID") {
-                        authenticateWithFaceID()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
-                
-                if KeychainService.getPasscode() != nil {
-                    Button("Use Passcode") {
-                        showingPasscodeEntry = true
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                }
-                
-                Button("Sign In Manually") {
-                    showingManualSignIn = true
-                }
-                .buttonStyle(.borderless)
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .background(Color(.systemGroupedBackground))
-        .onAppear {
-            // Auto-attempt Face ID if enabled
-            if settings.isFaceIDEnabled && KeychainService.getPasscode() != nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    authenticateWithFaceID()
-                }
-            }
-        }
-        .sheet(isPresented: $showingPasscodeEntry) {
-            PasscodeEntryView(
-                title: "Enter Passcode",
-                onSuccess: {
-                    showingPasscodeEntry = false
-                    userJourney.advance(to: .mainApp)
-                },
-                onCancel: {
-                    showingPasscodeEntry = false
-                }
-            )
-        }
-        .sheet(isPresented: $showingManualSignIn) {
-            WelcomeBackView()
-        }
-    }
-    
-    private func authenticateWithFaceID() {
-        Task {
-            let context = LAContext()
-            let reason = "Use Face ID to access your journal"
-            
-            do {
-                let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
-                if success {
-                    await MainActor.run {
-                        userJourney.advance(to: .mainApp)
-                    }
-                }
-            } catch {
-                print("Face ID failed: \(error.localizedDescription)")
-            }
-        }
-    }
-}
+// MARK: - Returning User Auth View (Removed - now going directly to passcode)
 
 // MARK: - Passcode Entry View
 struct PasscodeEntryView: View {
     let title: String
+    let subtitle: String
+    let showFaceID: Bool
     let onSuccess: () -> Void
     let onCancel: () -> Void
+    let onFaceID: () -> Void
     
     @State private var enteredPasscode = ""
     @State private var isShaking = false
     @State private var errorMessage = ""
+    @State private var showForgotModal = false
+    @Environment(\.dismiss) private var dismiss
     
     private let maxDigits = 4
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 30) {
+        VStack(spacing: 0) {
+            // Header with forgot button only
+            HStack {
                 Spacer()
                 
-                Text(title)
-                    .font(.title2)
-                    .fontWeight(.medium)
-                
-                if !errorMessage.isEmpty {
-                    Text(errorMessage)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                Button("Forgot?") {
+                    showForgotModal = true
                 }
-                
-                PasscodeIndicator(passcode: enteredPasscode)
-                    .shake(isShaking)
-                
-                NumberPad { digit in
-                    addDigit(digit)
-                }
-                
-                Spacer()
+                .font(.system(size: 17, weight: .regular))
+                .foregroundColor(.secondary)
             }
-            .padding()
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            
+            Spacer().frame(height: 40) // Reduced space from forgot text
+            
+            // Heard logo
+            Image("Heard Logo - Cream - Transparent - Landscape")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 60) // Increased logo size
+                .padding(.bottom, 30)
+            
+            // Title and subtitle
+            VStack(spacing: 12) {
+                Text(title)
+                    .font(.custom("GentyDemo-Regular", size: 28)) // Reduced size for better fit
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7) // More aggressive scaling
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                Text(subtitle)
+                    .font(.custom("VeryVogue-Display", size: 15)) // Smaller subtitle
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 25)
+            .padding(.bottom, 40)
+            
+            // Passcode dots
+            PasscodeIndicator(passcode: enteredPasscode)
+                .shake(isShaking)
+                .padding(.bottom, 60)
+            
+            // Error message
+            if !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .font(.system(size: 15, weight: .regular))
+                    .padding(.bottom, 20)
+            }
+            
+            Spacer()
+            
+            // Number pad
+            NumberPad(
+                onNumberTapped: { digit in
+                    addDigit(digit)
+                },
+                onFaceIDTapped: showFaceID ? onFaceID : nil,
+                showFaceID: showFaceID
+            )
+            
+            Spacer().frame(height: 40) // Bottom spacing
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.secondaryTaupe.ignoresSafeArea())
+        .sheet(isPresented: $showForgotModal) {
+            ForgotPasscodeModal(
+                isPresented: $showForgotModal,
+                onLogOut: {
+                    Task {
+                        print("🔐 Starting logout with smooth transition...")
+                        
+                        // Close modal first for immediate feedback
+                        await MainActor.run {
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                showForgotModal = false
+                            }
+                        }
+                        
+                        // Small delay for modal close animation to complete
+                        try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                        
+                        // Perform logout (includes its own delay for smooth transition)
+                        let success = await LogoutService.performCompleteLogout()
+                        if success {
+                            print("🎉 Logout completed, Firebase auth change will trigger routing")
+                            // UserJourneyManager will automatically route to sign-in via Firebase auth state change
+                        }
                     }
                 }
-            }
+            )
         }
     }
     
@@ -920,6 +1011,75 @@ struct PasscodeEntryView: View {
             isShaking = false
             enteredPasscode = ""
         }
+    }
+}
+
+// MARK: - Forgot Passcode Modal
+struct ForgotPasscodeModal: View {
+    @Binding var isPresented: Bool
+    let onLogOut: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Handle/drag indicator
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 36, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            
+            VStack(spacing: 20) {
+                Text("Locked out?")
+                    .font(.custom("GentyDemo-Regular", size: 28))
+                    .foregroundColor(.buttonBrown)
+                
+                VStack(spacing: 4) {
+                    Text("If you forgot your passcode you can")
+                        .font(.custom("VeryVogue-Display", size: 15))
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.buttonBrown)
+                    
+                    Text("log out and sign in again.")
+                        .font(.custom("VeryVogue-Display", size: 15))
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.buttonBrown)
+                }
+                .padding(.horizontal, 20)
+                
+                VStack(spacing: 12) {
+                    Button(action: {
+                        print("🚨 FORGOT PASSCODE: Log Out button pressed")
+                        onLogOut()
+                    }) {
+                        Text("Log Out")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(Color.buttonBrown)
+                            .cornerRadius(25)
+                    }
+                    
+                    Button(action: {
+                        isPresented = false
+                    }) {
+                        Text("Cancel")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundColor(.buttonBrown)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.heardCreamBoxes) // Heard cream background
+        .presentationDetents([.height(280)])
+        .presentationDragIndicator(.hidden) // We have our own
     }
 }
 
